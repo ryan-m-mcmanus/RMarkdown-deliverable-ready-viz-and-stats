@@ -1,0 +1,1935 @@
+---
+title: "Experiment 1"
+author: "BLINDED FOR PEER REVIEW"
+date: '`r format(Sys.time(), "%B %d, %Y")`'
+output: 
+  html_notebook:
+    code_folding: hide
+    highlight: tango
+    theme: darkly
+    toc: yes
+    toc_depth: 5
+    toc_float: yes
+---
+
+<br>
+
+# Data Waves
+
+As pre-registered, we sought to collect data to attain 200 analyzable responses for each between-subjects condition (i.e., 200 participants who passed all attention checks for each between-subjects condition, totalling 600 usable responses across the entire experiment). 
+
+<br>
+
+On the first wave of data collection (N = 694), applying the pre-registered exclusion criteria led to adequate samples (i.e., Ns > 200) for two between-subjects datasets, but an inadequate sample (i.e., N = 195) for one between-subjects dataset (specifically, the Stranger and Sibling dataset). Therefore, we launched a small second wave (N = 10) to attain an adequate sample for the Stranger and Sibling dataset.
+
+<br>
+
+# Data Cleaning
+
+Before data were loaded into R (below), the following changes were made:
+
+(1) Raw variable names from Qualtrics were renamed to be more descriptive.
+
+(2) If there were any responses for the field "Bot_Catcher," these cases were deleted. This field was designed to be an invisible question that only bots would answer (as human respondents would not see the field). However, 0 cases were detected.
+
+(3) Duplicate IP addresses were removed. There was only 1 instance of a duplicate IP address, but it came from two different Prolific IDs (and both responses were removed for failing attention checks).
+
+(4) All other identifying information was removed (e.g., IP addresses, longitude/latitude, etc.).
+
+<br>
+
+## Loading Data/Packages
+
+Before running this chunk, please load "E1_raw_data.csv" into the R environment.
+
+<br>
+```{r}
+# packages should be loaded in the following order to avoid function conflicts
+library(psych) # for describing data
+library(effsize) # for mean difference effect sizes
+library(sjstats) # for eta-squared effect sizes
+library(correlation) # for cleaner correlation test output
+library(rmcorr) # for repeated-measures correlation tests
+library(cocor) # for comparing dependent correlation coefficients
+library(tidyverse) # for data manipulation and plotting
+```
+
+## Data Separation/Recombining
+
+Data were separated into three distinct data sets (for each between-subjects condition). Then, a between-subjects variable was created within each between-subjects dataset. Last, all three datasets were recombined.
+
+<br>
+```{r}
+# creates dataset that only has partipants who made judgments of agents who helped strangers and cousins
+E1_STRnCUZ <- E1_raw_data %>%
+  filter(STRnCUZ_STR_m1 >= 0 | STRnCUZ_STR_m2 >= 0 | STRnCUZ_STR_m3 >= 0)
+
+# creates dataset that only has partipants who made judgments of agents who helped strangers and siblings
+E1_STRnSIB <- E1_raw_data %>%
+  filter(STRnSIB_STR_m1 >= 0 | STRnSIB_STR_m2 >= 0 | STRnSIB_STR_m3 >= 0)
+
+# creates dataset that only has partipants who made judgments of agents who helped cousins and siblings
+E1_CUZnSIB <- E1_raw_data %>%
+  filter(CUZnSIB_CUZ_m1 >= 0 | CUZnSIB_CUZ_m2 >= 0 | CUZnSIB_CUZ_m3 >= 0)
+
+# create between-subjects condition variable
+E1_STRnCUZ$BSs_cond <- rep("STR vs CUZ", nrow(E1_STRnCUZ))
+E1_STRnSIB$BSs_cond <- rep("STR vs SIB", nrow(E1_STRnSIB))
+E1_CUZnSIB$BSs_cond <- rep("CUZ vs SIB", nrow(E1_CUZnSIB))
+
+# recombine between-subjects data
+E1_all <- rbind(E1_STRnCUZ, E1_STRnSIB, E1_CUZnSIB)
+```
+
+## Implementing Attention Checks
+
+Based on our pre-registered criteria, participants who failed any of 3 attention checks were to be excluded from all analyses. This led to a final analyzable N = 611 (an 87% retention rate).
+
+<br>
+
+The first attention check was disguised as an experimental scenario; in the scenario text, participants were instructed to respond with the left-most option on the scale for all three pre-outcome measures (obligation, likelihood, and descriptive normativity). Participants who responded above a 10 on any of the three 100-point scales were excluded. 
+
+<br>
+
+The second and third attention checks explicitly instructed participants to respond in a particular way on two individual difference measures. The second attention check instructed participants to respond "strongly agree" on the MAC's 100 point scale; participants who responded below 90 were excluded. The third attention check instructed participants to respond "strongly disagree" on the MFQ's scale; participants who responded anything other than "strongly disagree" (a 1 on the 6-point scale) were excluded.
+
+<br>
+```{r}
+# Experimental task attention check variables
+E1_all$AC_oblig <- rowSums(E1_all[, c("AC_oblig1", "AC_oblig2", "AC_oblig3")], na.rm = T)
+E1_all$AC_likely <- rowSums(E1_all[, c("AC_likely1", "AC_likely2", "AC_likely3")], na.rm = T)
+E1_all$AC_dnorm <- rowSums(E1_all[, c("AC_dnorm1", "AC_dnorm2", "AC_dnorm3")], na.rm = T) # if any are > 10, exclude
+
+# Individual difference attention check variables
+E1_all$MAC_AC <- E1_all$MAC_Jud_4 # if < 90, exclude
+E1_all$MFQ_AC <- E1_all$MFQ_Jud_4 # if != 1, exclude
+
+# Create dataset that filters out inattentive participants
+E1_all_clean <- E1_all %>%
+  # excludes participants who were not paying attention during experimental task
+    filter(AC_oblig <= 10 & AC_likely <= 10 & AC_dnorm <= 10) %>%
+  # exclude participants who were not paying attention during MAC scale
+    filter(MAC_AC >= 90) %>%
+  # exclude participants who were not paying attention during MFQ scale
+    filter(MFQ_AC == 1)
+```
+
+## Creating Analysis Variables
+```{r}
+# Main DVs
+# create single column for each condition's variables that collapses across presentation order of DV
+
+# e.g., STRnCUZ_STR_o1 = STR vs CUZ dataset, "No Choice" condition, STR obligation judgment, obligation judgment presented first
+# to clarify, as noted in the Method section (and SOM), two other pre-outcome judgments were collected, equaling three different
+# orders of presentation, each of which started with a different DV (these additional judgments are not included here)
+
+E1_all_clean$NoChoice_STR_oblig  <- rowSums(E1_all_clean[, c("STRnCUZ_STR_o1", "STRnCUZ_STR_o2", "STRnCUZ_STR_o3", 
+                                              "STRnSIB_STR_o1", "STRnSIB_STR_o2", "STRnSIB_STR_o3")], na.rm = T)
+E1_all_clean$NoChoice_STR_moral  <- rowSums(E1_all_clean[, c("STRnCUZ_STR_m1", "STRnCUZ_STR_m2", "STRnCUZ_STR_m3", 
+                                              "STRnSIB_STR_m1", "STRnSIB_STR_m2", "STRnSIB_STR_m3")], na.rm = T)
+
+
+E1_all_clean$NoChoice_CUZ_oblig  <- rowSums(E1_all_clean[, c("STRnCUZ_CUZ_o1", "STRnCUZ_CUZ_o2", "STRnCUZ_CUZ_o3", 
+                                              "CUZnSIB_CUZ_o1", "CUZnSIB_CUZ_o2", "CUZnSIB_CUZ_o3")], na.rm = T)
+E1_all_clean$NoChoice_CUZ_moral  <- rowSums(E1_all_clean[, c("STRnCUZ_CUZ_m1", "STRnCUZ_CUZ_m2", "STRnCUZ_CUZ_m3", 
+                                              "CUZnSIB_CUZ_m1", "CUZnSIB_CUZ_m2", "CUZnSIB_CUZ_m3")], na.rm = T)
+
+
+E1_all_clean$NoChoice_SIB_oblig  <- rowSums(E1_all_clean[, c("STRnSIB_SIB_o1", "STRnSIB_SIB_o2", "STRnSIB_SIB_o3", 
+                                              "CUZnSIB_SIB_o1", "CUZnSIB_SIB_o2", "CUZnSIB_SIB_o3")], na.rm = T)
+E1_all_clean$NoChoice_SIB_moral  <- rowSums(E1_all_clean[, c("STRnSIB_SIB_m1", "STRnSIB_SIB_m2", "STRnSIB_SIB_m3", 
+                                              "CUZnSIB_SIB_m1", "CUZnSIB_SIB_m2", "CUZnSIB_SIB_m3")], na.rm = T)
+
+
+# e.g., STRoCUZ_STR_o11 = STR vs CUZ dataset, "Choice" condition, STR is eventually helped instead of CUZ,
+# obligation judgments in general presented first (first 1), but obligation to STR presented before obligation to CUZ (second 1)
+# to clarify, as noted in the Method section, two obligation judgments were collected in these conditions,
+# one for each potential beneficiary (e.g., STR and CUZ)
+E1_all_clean$STRoCUZ_STR_oblig <- rowSums(E1_all_clean[, c("STRoCUZ_STR_o11", "STRoCUZ_STR_o12", "STRoCUZ_STR_o31", 
+                                                  "STRoCUZ_STR_o21", "STRoCUZ_STR_o22", "STRoCUZ_STR_o32")], na.rm = T) 
+E1_all_clean$STRoCUZ_CUZ_oblig <- rowSums(E1_all_clean[, c("STRoCUZ_CUZ_o11", "STRoCUZ_CUZ_o12", "STRoCUZ_CUZ_o31", 
+                                                  "STRoCUZ_CUZ_o21", "STRoCUZ_CUZ_o22", "STRoCUZ_CUZ_o32")], na.rm = T)
+E1_all_clean$STRoCUZ_STR_moral <- rowSums(E1_all_clean[, c("STRoCUZ_STR_m11", "STRoCUZ_STR_m12", "STRoCUZ_STR_m31", 
+                                                  "STRoCUZ_STR_m21", "STRoCUZ_STR_m22", "STRoCUZ_STR_m32")], na.rm = T) 
+
+E1_all_clean$CUZoSTR_STR_oblig <- rowSums(E1_all_clean[, c("CUZoSTR_STR_o11", "CUZoSTR_STR_o12", "CUZoSTR_STR_o31", 
+                                                  "CUZoSTR_STR_o21", "CUZoSTR_STR_o22", "CUZoSTR_STR_o32")], na.rm = T) 
+E1_all_clean$CUZoSTR_CUZ_oblig <- rowSums(E1_all_clean[, c("CUZoSTR_CUZ_o11", "CUZoSTR_CUZ_o12", "CUZoSTR_CUZ_o31", 
+                                                  "CUZoSTR_CUZ_o21", "CUZoSTR_CUZ_o22", "CUZoSTR_CUZ_o32")], na.rm = T) 
+E1_all_clean$CUZoSTR_CUZ_moral <- rowSums(E1_all_clean[, c("CUZoSTR_CUZ_m11", "CUZoSTR_CUZ_m12", "CUZoSTR_CUZ_m31", 
+                                                  "CUZoSTR_CUZ_m21", "CUZoSTR_CUZ_m22", "CUZoSTR_CUZ_m32")], na.rm = T) 
+
+E1_all_clean$Choice_STRnCUZ_STR_oblig  <- (E1_all_clean$STRoCUZ_STR_oblig + E1_all_clean$CUZoSTR_STR_oblig)/2 # creates pre-registered obligation index for mean comparisons
+E1_all_clean$Choice_STRnCUZ_STR_moral  <- rowSums(E1_all_clean[, c(
+                                                  "STRoCUZ_STR_m11", "STRoCUZ_STR_m12", "STRoCUZ_STR_m31", 
+                                                  "STRoCUZ_STR_m21", "STRoCUZ_STR_m22", "STRoCUZ_STR_m32")], na.rm = T) # should be a duplicate of "STRoCUZ_STR_moral"
+
+E1_all_clean$Choice_STRnCUZ_CUZ_oblig  <- (E1_all_clean$STRoCUZ_CUZ_oblig + E1_all_clean$CUZoSTR_CUZ_oblig)/2 # creates pre-registered obligation index for mean comparisons
+E1_all_clean$Choice_STRnCUZ_CUZ_moral  <- rowSums(E1_all_clean[, c(
+                                                  "CUZoSTR_CUZ_m11", "CUZoSTR_CUZ_m12", "CUZoSTR_CUZ_m31", 
+                                                  "CUZoSTR_CUZ_m21", "CUZoSTR_CUZ_m22", "CUZoSTR_CUZ_m32")], na.rm = T) # should be a duplicate of "CUZoSTR_CUZ_moral"
+
+
+E1_all_clean$STRoSIB_STR_oblig <- rowSums(E1_all_clean[, c("STRoSIB_STR_o11", "STRoSIB_STR_o12", "STRoSIB_STR_o31", 
+                                                  "STRoSIB_STR_o21", "STRoSIB_STR_o22", "STRoSIB_STR_o32")], na.rm = T) 
+E1_all_clean$STRoSIB_SIB_oblig <- rowSums(E1_all_clean[, c("STRoSIB_SIB_o11", "STRoSIB_SIB_o12", "STRoSIB_SIB_o31", 
+                                                  "STRoSIB_SIB_o21", "STRoSIB_SIB_o22", "STRoSIB_SIB_o32")], na.rm = T) 
+E1_all_clean$STRoSIB_STR_moral <- rowSums(E1_all_clean[, c("STRoSIB_STR_m11", "STRoSIB_STR_m12", "STRoSIB_STR_m31", 
+                                                  "STRoSIB_STR_m21", "STRoSIB_STR_m22", "STRoSIB_STR_m32")], na.rm = T) 
+
+E1_all_clean$SIBoSTR_STR_oblig <- rowSums(E1_all_clean[, c("SIBoSTR_STR_o11", "SIBoSTR_STR_o12", "SIBoSTR_STR_o31", 
+                                                  "SIBoSTR_STR_o21", "SIBoSTR_STR_o22", "SIBoSTR_STR_o32")], na.rm = T) 
+E1_all_clean$SIBoSTR_SIB_oblig <- rowSums(E1_all_clean[, c("SIBoSTR_SIB_o11", "SIBoSTR_SIB_o12", "SIBoSTR_SIB_o31", 
+                                                  "SIBoSTR_SIB_o21", "SIBoSTR_SIB_o22", "SIBoSTR_SIB_o32")], na.rm = T) 
+E1_all_clean$SIBoSTR_SIB_moral <- rowSums(E1_all_clean[, c("SIBoSTR_SIB_m11", "SIBoSTR_SIB_m12", "SIBoSTR_SIB_m31", 
+                                                  "SIBoSTR_SIB_m21", "SIBoSTR_SIB_m22", "SIBoSTR_SIB_m32")], na.rm = T) 
+
+E1_all_clean$Choice_STRnSIB_STR_oblig  <- (E1_all_clean$STRoSIB_STR_oblig + E1_all_clean$SIBoSTR_STR_oblig)/2 # creates pre-registered obligation index for mean comparisons
+E1_all_clean$Choice_STRnSIB_STR_moral  <- rowSums(E1_all_clean[, c(
+                                                  "STRoSIB_STR_m11", "STRoSIB_STR_m12", "STRoSIB_STR_m31", 
+                                                  "STRoSIB_STR_m21", "STRoSIB_STR_m22", "STRoSIB_STR_m32")], na.rm = T) # should be a duplicate of "STRoSIB_STR_moral"
+
+E1_all_clean$Choice_STRnSIB_SIB_oblig  <- (E1_all_clean$STRoSIB_SIB_oblig + E1_all_clean$SIBoSTR_SIB_oblig)/2 # creates pre-registered obligation index for mean comparisons
+E1_all_clean$Choice_STRnSIB_SIB_moral  <- rowSums(E1_all_clean[, c(
+                                                  "SIBoSTR_SIB_m11", "SIBoSTR_SIB_m12", "SIBoSTR_SIB_m31", 
+                                                  "SIBoSTR_SIB_m21", "SIBoSTR_SIB_m22", "SIBoSTR_SIB_m32")], na.rm = T) # should be a duplicate of "SIBoSTR_SIB_moral"
+
+
+E1_all_clean$CUZoSIB_CUZ_oblig <- rowSums(E1_all_clean[, c("CUZoSIB_CUZ_o11", "CUZoSIB_CUZ_o12", "CUZoSIB_CUZ_o31", 
+                                                  "CUZoSIB_CUZ_o21", "CUZoSIB_CUZ_o22", "CUZoSIB_CUZ_o32")], na.rm = T) 
+E1_all_clean$CUZoSIB_SIB_oblig <- rowSums(E1_all_clean[, c("CUZoSIB_SIB_o11", "CUZoSIB_SIB_o12", "CUZoSIB_SIB_o31", 
+                                                  "CUZoSIB_SIB_o21", "CUZoSIB_SIB_o22", "CUZoSIB_SIB_o32")], na.rm = T) 
+E1_all_clean$CUZoSIB_CUZ_moral <- rowSums(E1_all_clean[, c("CUZoSIB_CUZ_m11", "CUZoSIB_CUZ_m12", "CUZoSIB_CUZ_m31", 
+                                                  "CUZoSIB_CUZ_m21", "CUZoSIB_CUZ_m22", "CUZoSIB_CUZ_m32")], na.rm = T) 
+
+
+E1_all_clean$SIBoCUZ_CUZ_oblig <- rowSums(E1_all_clean[, c("SIBoCUZ_CUZ_o11", "SIBoCUZ_CUZ_o12", "SIBoCUZ_CUZ_o31", 
+                                                  "SIBoCUZ_CUZ_o21", "SIBoCUZ_CUZ_o22", "SIBoCUZ_CUZ_o32")], na.rm = T) 
+E1_all_clean$SIBoCUZ_SIB_oblig <- rowSums(E1_all_clean[, c("SIBoCUZ_SIB_o11", "SIBoCUZ_SIB_o12", "SIBoCUZ_SIB_o31", 
+                                                  "SIBoCUZ_SIB_o21", "SIBoCUZ_SIB_o22", "SIBoCUZ_SIB_o32")], na.rm = T) 
+E1_all_clean$SIBoCUZ_SIB_moral <- rowSums(E1_all_clean[, c("SIBoCUZ_SIB_m11", "SIBoCUZ_SIB_m12", "SIBoCUZ_SIB_m31", 
+                                                  "SIBoCUZ_SIB_m21", "SIBoCUZ_SIB_m22", "SIBoCUZ_SIB_m32")], na.rm = T) 
+
+E1_all_clean$Choice_CUZnSIB_CUZ_oblig  <- (E1_all_clean$CUZoSIB_CUZ_oblig + E1_all_clean$SIBoCUZ_CUZ_oblig)/2 # creates pre-registered obligation index for mean comparisons
+E1_all_clean$Choice_CUZnSIB_CUZ_moral  <- rowSums(E1_all_clean[, c(
+                                                  "CUZoSIB_CUZ_m11", "CUZoSIB_CUZ_m12", "CUZoSIB_CUZ_m31", 
+                                                  "CUZoSIB_CUZ_m21", "CUZoSIB_CUZ_m22", "CUZoSIB_CUZ_m32")], na.rm = T) # should be a duplicate of "CUZoSIB_CUZ_moral"
+
+E1_all_clean$Choice_CUZnSIB_SIB_oblig  <- (E1_all_clean$CUZoSIB_SIB_oblig + E1_all_clean$SIBoCUZ_SIB_oblig)/2 # creates pre-registered obligation index for mean comparisons
+E1_all_clean$Choice_CUZnSIB_SIB_moral  <- rowSums(E1_all_clean[, c(
+                                                  "SIBoCUZ_SIB_m11", "SIBoCUZ_SIB_m12", "SIBoCUZ_SIB_m31", 
+                                                  "SIBoCUZ_SIB_m21", "SIBoCUZ_SIB_m22", "SIBoCUZ_SIB_m32")], na.rm = T) # should be a duplicate of "SIBoCUZ_SIB_moral"
+
+
+# Difference Scores
+# e.g., STR minus CUZ obligation within No Choice or Choice conditions (for diff score corrs and ind. diffs analyses)
+
+# STR vs CUZ
+E1_all_clean$NoChoice_STRminusCUZ_oblig <- E1_all_clean$NoChoice_STR_oblig - E1_all_clean$NoChoice_CUZ_oblig
+E1_all_clean$NoChoice_STRminusCUZ_moral <- E1_all_clean$NoChoice_STR_moral - E1_all_clean$NoChoice_CUZ_moral
+
+E1_all_clean$Choice_STRminusCUZ_oblig <- E1_all_clean$Choice_STRnCUZ_STR_oblig - E1_all_clean$Choice_STRnCUZ_CUZ_oblig
+E1_all_clean$Choice_STRminusCUZ_moral <- E1_all_clean$Choice_STRnCUZ_STR_moral - E1_all_clean$Choice_STRnCUZ_CUZ_moral
+
+# STR vs SIB
+E1_all_clean$NoChoice_STRminusSIB_oblig <- E1_all_clean$NoChoice_STR_oblig - E1_all_clean$NoChoice_SIB_oblig
+E1_all_clean$NoChoice_STRminusSIB_moral <- E1_all_clean$NoChoice_STR_moral - E1_all_clean$NoChoice_SIB_moral
+
+E1_all_clean$Choice_STRminusSIB_oblig <- E1_all_clean$Choice_STRnSIB_STR_oblig - E1_all_clean$Choice_STRnSIB_SIB_oblig
+E1_all_clean$Choice_STRminusSIB_moral <- E1_all_clean$Choice_STRnSIB_STR_moral - E1_all_clean$Choice_STRnSIB_SIB_moral
+
+# CUZ vs SIB
+E1_all_clean$NoChoice_CUZminusSIB_oblig <- E1_all_clean$NoChoice_CUZ_oblig - E1_all_clean$NoChoice_SIB_oblig
+E1_all_clean$NoChoice_CUZminusSIB_moral <- E1_all_clean$NoChoice_CUZ_moral - E1_all_clean$NoChoice_SIB_moral
+
+E1_all_clean$Choice_CUZminusSIB_oblig <- E1_all_clean$Choice_CUZnSIB_CUZ_oblig - E1_all_clean$Choice_CUZnSIB_SIB_oblig
+E1_all_clean$Choice_CUZminusSIB_moral <- E1_all_clean$Choice_CUZnSIB_CUZ_moral - E1_all_clean$Choice_CUZnSIB_SIB_moral
+
+
+# Individual Difference Measures (for ind. diffs analyses)
+
+# MAC (Morality-as-Cooperation scale) composite
+E1_all_clean$MAC_Fam_Combined <- ((E1_all_clean$MAC_Jud_1 + E1_all_clean$MAC_Jud_2 + E1_all_clean$MAC_Jud_3 +
+                                       E1_all_clean$MAC_Rel_1 + E1_all_clean$MAC_Rel_2 + E1_all_clean$MAC_Rel_3)/6)
+E1_all_clean$MAC_Fam_Jud <- ((E1_all_clean$MAC_Jud_1 + E1_all_clean$MAC_Jud_2 + E1_all_clean$MAC_Jud_3)/3)
+E1_all_clean$MAC_Fam_Rel <- ((E1_all_clean$MAC_Rel_1 + E1_all_clean$MAC_Rel_2 + E1_all_clean$MAC_Rel_3)/3)
+
+# MFQ (Moral Foundations Theory scale) composite
+E1_all_clean$MFQ_Loyalty_Combined <- ((E1_all_clean$MFQ_Jud_1 + E1_all_clean$MFQ_Jud_2 + E1_all_clean$MFQ_Jud_3 +
+                                       E1_all_clean$MFQ_Rel_1 + E1_all_clean$MFQ_Rel_2 + E1_all_clean$MFQ_Rel_3)/6)
+E1_all_clean$MFQ_Loyalty_Jud <- ((E1_all_clean$MFQ_Jud_1 + E1_all_clean$MFQ_Jud_2 + E1_all_clean$MFQ_Jud_3)/3)
+E1_all_clean$MFQ_Loyalty_Rel <- ((E1_all_clean$MFQ_Rel_1 + E1_all_clean$MFQ_Rel_2 + E1_all_clean$MFQ_Rel_3)/3)
+
+# OUS (Oxford Utilitarianism Scale: Impartial Beneficence subscale) composite
+E1_all_clean$OUS_IB <- ((E1_all_clean$OUS_IB1 + E1_all_clean$OUS_IB2 + E1_all_clean$OUS_IB3 +
+                             E1_all_clean$OUS_IB4 + E1_all_clean$OUS_IB5)/5)
+```
+
+## Creating Analyzable Between-Subjects Datasets
+```{r}
+# STR vs CUZ
+E1_STRnCUZ_clean <- E1_all_clean %>%
+  filter(BSs_cond == 'STR vs CUZ') %>%
+  # select only variables that are relevant to STRnCUZ
+  select(
+    ResponseId, # selects variable
+    Age:Political_Overall, # selects demographic variables
+    MAC_Jud_1:MAC_Jud_3, MAC_Rel_1:MAC_Rel_3, MFQ_Jud_1:MFQ_Jud_3, MFQ_Rel_1:MFQ_Rel_3, OUS_IB1:OUS_IB5, # selects raw ind. diff variables (for reliabilty check)
+    MAC_Fam_Combined:OUS_IB, # selects composited ind. diff variables
+    BSs_cond, # selects variable for between-subjects condition
+    Dist_Scen:CloseODist_Scen, # selects within-subjects condition variable
+    NoChoice_STR_oblig:NoChoice_CUZ_moral, # selects NoChoice DVs for STRnCUZ dataset
+    Choice_STRnCUZ_STR_oblig:Choice_STRnCUZ_CUZ_moral, # selects Choice DVs for STRnCUZ dataset
+    NoChoice_STRminusCUZ_oblig:Choice_STRminusCUZ_moral # selects difference score variables for STRnCUZ dataset
+    )
+
+# STR vs SIB
+E1_STRnSIB_clean <- E1_all_clean %>%
+  filter(BSs_cond == 'STR vs SIB') %>%
+  # select only variables that are relevant to STRnCUZ
+  select(
+    ResponseId, # selects variable
+    Age:Political_Overall, # selects demographic variables
+    MAC_Jud_1:MAC_Jud_3, MAC_Rel_1:MAC_Rel_3, MFQ_Jud_1:MFQ_Jud_3, MFQ_Rel_1:MFQ_Rel_3, OUS_IB1:OUS_IB5, # selects raw ind. diff variables (for reliabilty check)
+    MAC_Fam_Combined:OUS_IB, # selects composited ind. diff variables
+    BSs_cond, # selects variable for between-subjects condition
+    Dist_Scen:CloseODist_Scen, # sselects within-subjects condition variable
+    NoChoice_STR_oblig:NoChoice_STR_moral, NoChoice_SIB_oblig:NoChoice_SIB_moral, # selects NoChoice DVs for STRnSIB dataset
+    Choice_STRnSIB_STR_oblig:Choice_STRnSIB_SIB_moral, # selects Choice DVs for STRnSIB dataset
+    NoChoice_STRminusSIB_oblig:Choice_STRminusSIB_moral # selects difference score variables for STRnSIB dataset
+    )
+
+# CUZ vs SIB
+E1_CUZnSIB_clean <- E1_all_clean %>%
+  filter(BSs_cond == 'CUZ vs SIB') %>%
+  # select only variables that are relevant to STRnCUZ
+  select(
+    ResponseId, # selects variable
+    Age:Political_Overall, # selects demographic variables
+    MAC_Jud_1:MAC_Jud_3, MAC_Rel_1:MAC_Rel_3, MFQ_Jud_1:MFQ_Jud_3, MFQ_Rel_1:MFQ_Rel_3, OUS_IB1:OUS_IB5, # selects raw ind. diff variables (for reliabilty check)
+    MAC_Fam_Combined:OUS_IB, # selects composited ind. diff variables
+    BSs_cond, # selects variable for between-subjects condition
+    Dist_Scen:CloseODist_Scen, # selects within-subjects condition variable
+    NoChoice_CUZ_oblig:NoChoice_SIB_moral, # selects NoChoice DVs for CUZnSIB dataset
+    Choice_CUZnSIB_CUZ_oblig:Choice_CUZnSIB_SIB_moral, # selects Choice DVs for CUZnSIB dataset
+    NoChoice_CUZminusSIB_oblig:Choice_CUZminusSIB_moral # selects difference score variables for CUZnSIB dataset
+    )
+```
+
+## Tidying Data
+```{r}
+# Convert data from wide to long format for obligation and moral character
+# STRnCUZ
+E1_STRnCUZ_cond_long <- E1_STRnCUZ_clean %>%
+  pivot_longer(
+    cols = c(Dist_Scen, Close_Scen, DistOClose_Scen, CloseODist_Scen),
+    names_to = "WSs_cond",
+    values_to = "Condition"
+  )
+
+E1_STRnCUZ_oblig_long <- E1_STRnCUZ_clean %>%
+  pivot_longer(
+    cols = c(NoChoice_STR_oblig, NoChoice_CUZ_oblig, Choice_STRnCUZ_STR_oblig, Choice_STRnCUZ_CUZ_oblig),
+    names_to = "WSs_cond",
+    values_to = "oblig"
+  )
+
+
+E1_STRnCUZ_moral_long <- E1_STRnCUZ_clean %>%
+  pivot_longer(
+    cols = c(NoChoice_STR_moral, NoChoice_CUZ_moral, Choice_STRnCUZ_STR_moral, Choice_STRnCUZ_CUZ_moral),
+    names_to = "WSs_cond",
+    values_to = "moral"
+  )
+
+# Combine long STRnCUZ datasets, select plotting variables, and create condition variable for each factor (Relation + Choice Context)
+E1_STRnCUZ_long <- cbind(E1_STRnCUZ_cond_long, E1_STRnCUZ_oblig_long, E1_STRnCUZ_moral_long)
+
+E1_STRnCUZ_long <- E1_STRnCUZ_long[, !duplicated(colnames(E1_STRnCUZ_long))] %>% # get rid of duplicate columns
+  select(ResponseId,
+         Age:OUS_IB,
+         BSs_cond,
+         WSs_cond,
+         Condition,
+         oblig, moral) %>%
+  mutate(Relation = case_when(
+    WSs_cond == "Dist_Scen" ~ "Distant",
+    WSs_cond == "Close_Scen" ~ "Close",
+    WSs_cond == "DistOClose_Scen" ~ "Distant",
+    WSs_cond == "CloseODist_Scen" ~ "Close")) %>%
+  mutate(`Choice Context` = case_when(
+    WSs_cond == "Dist_Scen" ~ "No Choice",
+    WSs_cond == "Close_Scen" ~ "No Choice",
+    WSs_cond == "DistOClose_Scen" ~ "Choice",
+    WSs_cond == "CloseODist_Scen" ~ "Choice"))
+
+# Reorder/rename condition and participant factors
+E1_STRnCUZ_long$Relation <- as.factor(E1_STRnCUZ_long$Relation)
+E1_STRnCUZ_long$Relation <- ordered(E1_STRnCUZ_long$Relation, levels = c("Distant", "Close"))
+E1_STRnCUZ_long$`Choice Context` <- as.factor(E1_STRnCUZ_long$`Choice Context`)
+E1_STRnCUZ_long$`Choice Context` <- ordered(E1_STRnCUZ_long$`Choice Context`, levels = c("No Choice", "Choice"))
+E1_STRnCUZ_long$ResponseId <- as.factor(E1_STRnCUZ_long$ResponseId)
+
+
+# Convert data from wide to long format for obligation and moral character
+# STRnSIB
+E1_STRnSIB_cond_long <- E1_STRnSIB_clean %>%
+  pivot_longer(
+    cols = c(Dist_Scen, Close_Scen, DistOClose_Scen, CloseODist_Scen),
+    names_to = "WSs_cond",
+    values_to = "Condition"
+  )
+
+E1_STRnSIB_oblig_long <- E1_STRnSIB_clean %>%
+  pivot_longer(
+    cols = c(NoChoice_STR_oblig, NoChoice_SIB_oblig, Choice_STRnSIB_STR_oblig, Choice_STRnSIB_SIB_oblig),
+    names_to = "WSs_cond",
+    values_to = "oblig"
+  )
+
+
+E1_STRnSIB_moral_long <- E1_STRnSIB_clean %>%
+  pivot_longer(
+    cols = c(NoChoice_STR_moral, NoChoice_SIB_moral, Choice_STRnSIB_STR_moral, Choice_STRnSIB_SIB_moral),
+    names_to = "WSs_cond",
+    values_to = "moral"
+  )
+
+# Combine long STRnSIB datasets, select plotting variables, and create condition variable for each factor (Relation + Choice Context)
+E1_STRnSIB_long <- cbind(E1_STRnSIB_cond_long, E1_STRnSIB_oblig_long, E1_STRnSIB_moral_long)
+
+E1_STRnSIB_long <- E1_STRnSIB_long[, !duplicated(colnames(E1_STRnSIB_long))] %>% # get rid of duplicate columns
+  select(ResponseId,
+         Age:OUS_IB,
+         BSs_cond,
+         WSs_cond,
+         Condition,
+         oblig, moral) %>%
+  mutate(Relation = case_when(
+    WSs_cond == "Dist_Scen" ~ "Distant",
+    WSs_cond == "Close_Scen" ~ "Close",
+    WSs_cond == "DistOClose_Scen" ~ "Distant",
+    WSs_cond == "CloseODist_Scen" ~ "Close")) %>%
+  mutate(`Choice Context` = case_when(
+    WSs_cond == "Dist_Scen" ~ "No Choice",
+    WSs_cond == "Close_Scen" ~ "No Choice",
+    WSs_cond == "DistOClose_Scen" ~ "Choice",
+    WSs_cond == "CloseODist_Scen" ~ "Choice"))
+
+# Reorder/rename condition and participant factors
+E1_STRnSIB_long$Relation <- as.factor(E1_STRnSIB_long$Relation)
+E1_STRnSIB_long$Relation <- ordered(E1_STRnSIB_long$Relation, levels = c("Distant", "Close"))
+E1_STRnSIB_long$`Choice Context` <- as.factor(E1_STRnSIB_long$`Choice Context`)
+E1_STRnSIB_long$`Choice Context` <- ordered(E1_STRnSIB_long$`Choice Context`, levels = c("No Choice", "Choice"))
+E1_STRnSIB_long$ResponseId <- as.factor(E1_STRnSIB_long$ResponseId)
+
+
+# Convert data from wide to long format for obligation and moral character
+# CUZnSIB
+E1_CUZnSIB_cond_long <- E1_CUZnSIB_clean %>%
+  pivot_longer(
+    cols = c(Dist_Scen, Close_Scen, DistOClose_Scen, CloseODist_Scen),
+    names_to = "WSs_cond",
+    values_to = "Condition"
+  )
+
+E1_CUZnSIB_oblig_long <- E1_CUZnSIB_clean %>%
+  pivot_longer(
+    cols = c(NoChoice_CUZ_oblig, NoChoice_SIB_oblig, Choice_CUZnSIB_CUZ_oblig, Choice_CUZnSIB_SIB_oblig),
+    names_to = "WSs_cond",
+    values_to = "oblig"
+  )
+
+
+E1_CUZnSIB_moral_long <- E1_CUZnSIB_clean %>%
+  pivot_longer(
+    cols = c(NoChoice_CUZ_moral, NoChoice_SIB_moral, Choice_CUZnSIB_CUZ_moral, Choice_CUZnSIB_SIB_moral),
+    names_to = "WSs_cond",
+    values_to = "moral"
+  )
+
+# Combine long CUZnSIB datasets, select plotting variables, and create condition variable for each factor (Relation + Choice Context)
+E1_CUZnSIB_long <- cbind(E1_CUZnSIB_cond_long, E1_CUZnSIB_oblig_long, E1_CUZnSIB_moral_long)
+
+E1_CUZnSIB_long <- E1_CUZnSIB_long[, !duplicated(colnames(E1_CUZnSIB_long))] %>% # get rid of duplicate columns
+  select(ResponseId,
+         Age:OUS_IB,
+         BSs_cond,
+         WSs_cond,
+         Condition,
+         oblig, moral) %>%
+  mutate(Relation = case_when(
+    WSs_cond == "Dist_Scen" ~ "Distant",
+    WSs_cond == "Close_Scen" ~ "Close",
+    WSs_cond == "DistOClose_Scen" ~ "Distant",
+    WSs_cond == "CloseODist_Scen" ~ "Close")) %>%
+  mutate(`Choice Context` = case_when(
+    WSs_cond == "Dist_Scen" ~ "No Choice",
+    WSs_cond == "Close_Scen" ~ "No Choice",
+    WSs_cond == "DistOClose_Scen" ~ "Choice",
+    WSs_cond == "CloseODist_Scen" ~ "Choice"))
+
+# Reorder/rename condition and participant factors
+E1_CUZnSIB_long$Relation <- as.factor(E1_CUZnSIB_long$Relation)
+E1_CUZnSIB_long$Relation <- ordered(E1_CUZnSIB_long$Relation, levels = c("Distant", "Close"))
+E1_CUZnSIB_long$`Choice Context` <- as.factor(E1_CUZnSIB_long$`Choice Context`)
+E1_CUZnSIB_long$`Choice Context` <- ordered(E1_CUZnSIB_long$`Choice Context`, levels = c("No Choice", "Choice"))
+E1_CUZnSIB_long$ResponseId <- as.factor(E1_CUZnSIB_long$ResponseId)
+
+
+
+# Combine into one dataset for later exploratory analyses
+E1_all_long <- rbind(E1_STRnSIB_long, E1_STRnCUZ_long, E1_CUZnSIB_long)
+# Reorder All_long BSs_cond
+E1_all_long$BSs_cond <- as.factor(E1_all_long$BSs_cond)
+E1_all_long$BSs_cond <- ordered(E1_all_long$BSs_cond, levels = c("STR vs SIB", "STR vs CUZ", "CUZ vs SIB")) # order is due to likely differences between datasets (largest to smallest - see pre-registration's "exploratory analysis" section)
+```
+
+
+# Descriptive Statistics {.tabset}
+
+## Oblig {.tabset}
+
+### STRnSIB
+```{r}
+describeBy(E1_STRnSIB_long$oblig, list(E1_STRnSIB_long$Relation, E1_STRnSIB_long$`Choice Context`), mat = T)
+```
+### STRnCUZ
+```{r}
+describeBy(E1_STRnCUZ_long$oblig, list(E1_STRnCUZ_long$Relation, E1_STRnCUZ_long$`Choice Context`), mat = T)
+```
+### CUZnSIB
+```{r}
+describeBy(E1_CUZnSIB_long$oblig, list(E1_CUZnSIB_long$Relation, E1_CUZnSIB_long$`Choice Context`), mat = T)
+```
+
+## Moral {.tabset}
+
+### STRnSIB
+```{r}
+describeBy(E1_STRnSIB_long$moral, list(E1_STRnSIB_long$Relation, E1_STRnSIB_long$`Choice Context`), mat = T)
+```
+### STRnCUZ
+```{r}
+describeBy(E1_STRnCUZ_long$moral, list(E1_STRnCUZ_long$Relation, E1_STRnCUZ_long$`Choice Context`), mat = T)
+```
+### CUZnSIB
+```{r}
+describeBy(E1_CUZnSIB_long$moral, list(E1_CUZnSIB_long$Relation, E1_CUZnSIB_long$`Choice Context`), mat = T)
+```
+
+
+# Mean Difference Plots {.tabset}
+```{r}
+# Set dodge for plotting crossed factors
+dodge = position_dodge(width = 1) 
+```
+
+## Oblig {.tabset}
+
+### STRnSIB
+```{r, fig.width = 14, fig.height = 9, out.width = "75%", out.height = "75%"}
+print(oblig_plot_STRnSIB <- ggplot(data = E1_STRnSIB_long, aes(x = `Choice Context`, y = oblig, fill = Relation)) +
+        geom_violin(aes(fill = Relation), position = dodge) +
+        geom_boxplot(width = 0.1, color = "black", outlier.shape = NA, position = dodge) +
+        scale_fill_manual(values = c("lightskyblue3", "indianred3")) +
+        stat_summary(fun = mean, geom = "point", shape = 18, color = "white", size = 3, position = dodge) +
+        theme(legend.position = "right") +
+        theme_classic() +
+        xlab("Choice Context") +
+        ylab("Obligation Strength") + 
+        theme(axis.title.x = element_text(size = 14), 
+              axis.title.y = element_text(size = 14),
+              axis.text.x = element_text(color = "black", size = 12), 
+              axis.text.y = element_text(color = "black", size = 12),
+              legend.position = "right",
+              legend.title = element_text(color = "black", size = 14),
+              legend.text = element_text(color = "black", size = 12)))
+```
+### STRnCUZ
+```{r, fig.width = 14, fig.height = 9, out.width = "75%", out.height = "75%"}
+print(oblig_plot_STRnCUZ <- ggplot(data = E1_STRnCUZ_long, aes(x = `Choice Context`, y = oblig, fill = Relation)) +
+        geom_violin(aes(fill = Relation), position = dodge) +
+        geom_boxplot(width = 0.1, color = "black", outlier.shape = NA, position = dodge) +
+        scale_fill_manual(values = c("lightskyblue3", "indianred3")) +
+        stat_summary(fun = mean, geom = "point", shape = 18, color = "white", size = 3, position = dodge) +
+        theme(legend.position = "right") +
+        theme_classic() +
+        xlab("Choice Context") +
+        ylab("Obligation Strength") +  
+        theme(axis.title.x = element_text(size = 14), 
+              axis.title.y = element_text(size = 14),
+              axis.text.x = element_text(color = "black", size = 12), 
+              axis.text.y = element_text(color = "black", size = 12),
+              legend.position = "right",
+              legend.title = element_text(color = "black", size = 14),
+              legend.text = element_text(color = "black", size = 12)))
+```
+### CUZnSIB
+```{r, fig.width = 14, fig.height = 9, out.width = "75%", out.height = "75%"}
+print(oblig_plot_CUZnSIB <- ggplot(data = E1_CUZnSIB_long, aes(x = `Choice Context`, y = oblig, fill = Relation)) +
+        geom_violin(aes(fill = Relation), position = dodge) +
+        geom_boxplot(width = 0.1, color = "black", outlier.shape = NA, position = dodge) +
+        scale_fill_manual(values = c("lightskyblue3", "indianred3")) +
+        stat_summary(fun = mean, geom = "point", shape = 18, color = "white", size = 3, position = dodge) +
+        theme(legend.position = "right") +
+        theme_classic() +
+        xlab("Choice Context") +
+        ylab("Obligation Strength") +  
+        theme(axis.title.x = element_text(size = 14), 
+              axis.title.y = element_text(size = 14),
+              axis.text.x = element_text(color = "black", size = 12), 
+              axis.text.y = element_text(color = "black", size = 12),
+              legend.position = "right",
+              legend.title = element_text(color = "black", size = 14),
+              legend.text = element_text(color = "black", size = 12)))
+```
+### Combined
+```{r, fig.width = 14, fig.height = 9, out.width = "75%", out.height = "75%"}
+print(oblig_plot_combined <- ggplot(data = E1_all_long, aes(x = `Choice Context`, y = oblig, fill = Relation)) +
+        geom_violin(aes(fill = Relation), position = dodge) +
+        geom_boxplot(width = 0.1, color = "black", outlier.shape = NA, position = dodge) +
+        scale_fill_manual(values = c("lightskyblue3", "indianred3")) +
+        stat_summary(fun = mean, geom = "point", shape = 18, color = "white", size = 3, position = dodge) +
+        theme(legend.position = "right") +
+        theme_classic() +
+        facet_wrap(~BSs_cond, nrow = 3) +
+        xlab("\nChoice Context") +
+        ylab("Obligation Strength\n") +
+        theme(axis.title.x = element_text(size = 18), 
+              axis.title.y = element_text(size = 18),
+              axis.text.x = element_text(color = "black", size = 16), 
+              axis.text.y = element_text(color = "black", size = 16),
+              strip.text.x = element_text(color = "black", size = 16),
+              legend.position = "right",
+              legend.title = element_text(color = "black", size = 18),
+              legend.text = element_text(color = "black", size = 16)))
+
+ggsave("E1_oblig_plot.png")
+```
+
+## Moral {.tabset}
+
+### STRnSIB
+```{r, fig.width = 14, fig.height = 9, out.width = "75%", out.height = "75%"}
+print(moral_plot_STRnSIB <- ggplot(data = E1_STRnSIB_long, aes(x = `Choice Context`, y = moral, fill = Relation)) +
+        geom_hline(yintercept = 50, linetype = "dashed", color = "black") +
+        geom_violin(aes(fill = Relation), position = dodge) +
+        geom_boxplot(width = 0.1, color = "black", outlier.shape = NA, position = dodge) +
+        scale_fill_manual(values = c("lightskyblue3", "indianred3")) +
+        stat_summary(fun = mean, geom = "point", shape = 18, color = "white", size = 3, position = dodge) +
+        theme(legend.position = "right") +
+        theme_classic() +
+        xlab("Choice Context") +
+        ylab("Moral Character") + 
+        theme(axis.title.x = element_text(size = 14), 
+              axis.title.y = element_text(size = 14),
+              axis.text.x = element_text(color = "black", size = 12), 
+              axis.text.y = element_text(color = "black", size = 12),
+              legend.position = "right",
+              legend.title = element_text(color = "black", size = 14),
+              legend.text = element_text(color = "black", size = 12)))
+```
+### STRnCUZ
+```{r, fig.width = 14, fig.height = 9, out.width = "75%", out.height = "75%"}
+print(moral_plot_STRnCUZ <- ggplot(data = E1_STRnCUZ_long, aes(x = `Choice Context`, y = moral, fill = Relation)) +
+        geom_hline(yintercept = 50, linetype = "dashed", color = "black") +
+        geom_violin(aes(fill = Relation), position = dodge) +
+        geom_boxplot(width = 0.1, color = "black", outlier.shape = NA, position = dodge) +
+        scale_fill_manual(values = c("lightskyblue3", "indianred3")) +
+        stat_summary(fun = mean, geom = "point", shape = 18, color = "white", size = 3, position = dodge) +
+        theme(legend.position = "right") +
+        theme_classic() +
+        xlab("Choice Context") +
+        ylab("Moral Character") + 
+        theme(axis.title.x = element_text(size = 14), 
+              axis.title.y = element_text(size = 14),
+              axis.text.x = element_text(color = "black", size = 12), 
+              axis.text.y = element_text(color = "black", size = 12),
+              legend.position = "right",
+              legend.title = element_text(color = "black", size = 14),
+              legend.text = element_text(color = "black", size = 12)))
+```
+### CUZnSIB
+```{r, fig.width = 14, fig.height = 9, out.width = "75%", out.height = "75%"}
+print(moral_plot_CUZnSIB <- ggplot(data = E1_CUZnSIB_long, aes(x = `Choice Context`, y = moral, fill = Relation)) +
+        geom_hline(yintercept = 50, linetype = "dashed", color = "black") +
+        geom_violin(aes(fill = Relation), position = dodge) +
+        geom_boxplot(width = 0.1, color = "black", outlier.shape = NA, position = dodge) +
+        scale_fill_manual(values = c("lightskyblue3", "indianred3")) +
+        stat_summary(fun = mean, geom = "point", shape = 18, color = "white", size = 3, position = dodge) +
+        theme(legend.position = "right") +
+        theme_classic() +
+        xlab("Choice Context") +
+        ylab("Moral Character") + 
+        theme(axis.title.x = element_text(size = 14), 
+              axis.title.y = element_text(size = 14),
+              axis.text.x = element_text(color = "black", size = 12), 
+              axis.text.y = element_text(color = "black", size = 12),
+              legend.position = "right",
+              legend.title = element_text(color = "black", size = 14),
+              legend.text = element_text(color = "black", size = 12)))
+```
+### Combined
+```{r, fig.width = 14, fig.height = 9, out.width = "75%", out.height = "75%"}
+print(moral_plot_combined <- ggplot(data = E1_all_long, aes(x = `Choice Context`, y = moral, fill = Relation)) +
+        geom_hline(yintercept = 50, linetype = "dashed", color = "black") +
+        geom_violin(aes(fill = Relation), position = dodge) +
+        geom_boxplot(width = 0.1, color = "black", outlier.shape = NA, position = dodge) +
+        scale_fill_manual(values = c("lightskyblue3", "indianred3")) +
+        stat_summary(fun = mean, geom = "point", shape = 18, color = "white", size = 3, position = dodge) +
+        theme(legend.position = "right") +
+        theme_classic() +
+        facet_wrap(~BSs_cond, nrow = 3) +
+        xlab("\nChoice Context") +
+        ylab("Moral Character\n") + 
+        theme(axis.title.x = element_text(size = 18), 
+              axis.title.y = element_text(size = 18),
+              axis.text.x = element_text(color = "black", size = 16), 
+              axis.text.y = element_text(color = "black", size = 16),
+              strip.text.x = element_text(color = "black", size = 16),
+              legend.position = "right",
+              legend.title = element_text(color = "black", size = 18),
+              legend.text = element_text(color = "black", size = 16)))
+
+ggsave("E1_moral_plot.png")
+```
+
+
+# Mean Difference Tests {.tabset}
+
+<br>
+
+See our pre-registration (https://osf.io/6q4kr/?view_only=8033c65c9dfc41bcbc528fe94409e4e8) for our predictions related to obligation judgments and moral character judgments.
+
+<br>
+
+## Oblig {.tabset}
+
+### STRnSIB {.tabset}
+
+#### No Choice
+```{r}
+# returns t-test results
+t.test(oblig ~ Relation, 
+       data = E1_all_long %>% filter(BSs_cond == "STR vs SIB") %>% filter(`Choice Context` == "No Choice") %>% droplevels(), 
+       paired = T)
+
+# returns dz effect size and 95% CIs
+effsize::cohen.d(oblig ~ Relation | Subject(ResponseId),
+                 data = E1_all_long %>% filter(BSs_cond == "STR vs SIB") %>% filter(`Choice Context` == "No Choice") %>% droplevels(), 
+                 paired = T,
+                 within = F) # setting this to false ensures dz is calculated, using difference score
+
+# returns d-av effect size and 95% CIs
+effsize::cohen.d(oblig ~ Relation | Subject(ResponseId),
+                 data = E1_all_long %>% filter(BSs_cond == "STR vs SIB") %>% filter(`Choice Context` == "No Choice") %>% droplevels(), 
+                 paired = T,
+                 within = T) # setting this to true ensures d-av is calculated, using raw scores
+
+# returns correlation between variables
+cor_test(data = E1_STRnSIB_clean, "NoChoice_STR_oblig", "NoChoice_SIB_oblig", method = "Pearson")
+```
+#### Choice
+```{r}
+# returns t-test results
+t.test(oblig ~ Relation, 
+       data = E1_all_long %>% filter(BSs_cond == "STR vs SIB") %>% filter(`Choice Context` == "Choice") %>% droplevels(), 
+       paired = T)
+
+# returns dz effect size and 95% CIs
+effsize::cohen.d(oblig ~ Relation | Subject(ResponseId),
+                 data = E1_all_long %>% filter(BSs_cond == "STR vs SIB") %>% filter(`Choice Context` == "Choice") %>% droplevels(), 
+                 paired = T,
+                 within = F) # setting this to false ensures dz is calculated, using difference score
+
+# returns d-av effect size and 95% CIs
+effsize::cohen.d(oblig ~ Relation | Subject(ResponseId),
+                 data = E1_all_long %>% filter(BSs_cond == "STR vs SIB") %>% filter(`Choice Context` == "Choice") %>% droplevels(), 
+                 paired = T,
+                 within = T) # setting this to true ensures d-av is calculated, using raw scores
+
+# returns correlation between variables
+cor_test(data = E1_STRnSIB_clean, "Choice_STRnSIB_STR_oblig", "Choice_STRnSIB_SIB_oblig", method = "Pearson")
+```
+
+### STRnCUZ {.tabset}
+
+#### No Choice
+```{r}
+# returns t-test results
+t.test(oblig ~ Relation, 
+       data = E1_all_long %>% filter(BSs_cond == "STR vs CUZ") %>% filter(`Choice Context` == "No Choice") %>% droplevels(), 
+       paired = T)
+
+# returns dz effect size and 95% CIs
+effsize::cohen.d(oblig ~ Relation | Subject(ResponseId),
+                 data = E1_all_long %>% filter(BSs_cond == "STR vs CUZ") %>% filter(`Choice Context` == "No Choice") %>% droplevels(), 
+                 paired = T,
+                 within = F) # setting this to false ensures dz is calculated, using difference score
+
+# returns d-av effect size and 95% CIs
+effsize::cohen.d(oblig ~ Relation | Subject(ResponseId),
+                 data = E1_all_long %>% filter(BSs_cond == "STR vs CUZ") %>% filter(`Choice Context` == "No Choice") %>% droplevels(), 
+                 paired = T,
+                 within = T) # setting this to true ensures d-av is calculated, using raw scores
+
+# returns correlation between variables
+cor_test(data = E1_STRnCUZ_clean, "NoChoice_STR_oblig", "NoChoice_CUZ_oblig", method = "Pearson")
+```
+#### Choice
+```{r}
+# returns t-test results
+t.test(oblig ~ Relation, 
+       data = E1_all_long %>% filter(BSs_cond == "STR vs CUZ") %>% filter(`Choice Context` == "Choice") %>% droplevels(), 
+       paired = T)
+
+# returns dz effect size and 95% CIs
+effsize::cohen.d(oblig ~ Relation | Subject(ResponseId),
+                 data = E1_all_long %>% filter(BSs_cond == "STR vs CUZ") %>% filter(`Choice Context` == "Choice") %>% droplevels(), 
+                 paired = T,
+                 within = F) # setting this to false ensures dz is calculated, using difference score
+
+# returns d-av effect size and 95% CIs
+effsize::cohen.d(oblig ~ Relation | Subject(ResponseId),
+                 data = E1_all_long %>% filter(BSs_cond == "STR vs CUZ") %>% filter(`Choice Context` == "Choice") %>% droplevels(), 
+                 paired = T,
+                 within = T) # setting this to true ensures d-av is calculated, using raw scores
+
+# returns correlation between variables
+cor_test(data = E1_STRnCUZ_clean, "Choice_STRnCUZ_STR_oblig", "Choice_STRnCUZ_CUZ_oblig", method = "Pearson")
+```
+
+### CUZnSIB {.tabset}
+
+#### No Choice
+```{r}
+# returns t-test results
+t.test(oblig ~ Relation, 
+       data = E1_all_long %>% filter(BSs_cond == "CUZ vs SIB") %>% filter(`Choice Context` == "No Choice") %>% droplevels(), 
+       paired = T)
+
+# returns dz effect size and 95% CIs
+effsize::cohen.d(oblig ~ Relation | Subject(ResponseId),
+                 data = E1_all_long %>% filter(BSs_cond == "CUZ vs SIB") %>% filter(`Choice Context` == "No Choice") %>% droplevels(), 
+                 paired = T,
+                 within = F) # setting this to false ensures dz is calculated, using difference score
+
+# returns d-av effect size and 95% CIs
+effsize::cohen.d(oblig ~ Relation | Subject(ResponseId),
+                 data = E1_all_long %>% filter(BSs_cond == "CUZ vs SIB") %>% filter(`Choice Context` == "No Choice") %>% droplevels(), 
+                 paired = T,
+                 within = T) # setting this to true ensures d-av is calculated, using raw scores
+
+# returns correlation between variables
+cor_test(data = E1_CUZnSIB_clean, "NoChoice_CUZ_oblig", "NoChoice_SIB_oblig", method = "Pearson")
+```
+#### Choice
+```{r}
+# returns t-test results
+t.test(oblig ~ Relation, 
+       data = E1_all_long %>% filter(BSs_cond == "CUZ vs SIB") %>% filter(`Choice Context` == "Choice") %>% droplevels(), 
+       paired = T)
+
+# returns dz effect size and 95% CIs
+effsize::cohen.d(oblig ~ Relation | Subject(ResponseId),
+                 data = E1_all_long %>% filter(BSs_cond == "CUZ vs SIB") %>% filter(`Choice Context` == "Choice") %>% droplevels(), 
+                 paired = T,
+                 within = F) # setting this to false ensures dz is calculated, using difference score
+
+# returns d-av effect size and 95% CIs
+effsize::cohen.d(oblig ~ Relation | Subject(ResponseId),
+                 data = E1_all_long %>% filter(BSs_cond == "CUZ vs SIB") %>% filter(`Choice Context` == "Choice") %>% droplevels(), 
+                 paired = T,
+                 within = T) # setting this to true ensures d-av is calculated, using raw scores
+
+# returns correlation between variables
+cor_test(data = E1_CUZnSIB_clean, "Choice_CUZnSIB_CUZ_oblig", "Choice_CUZnSIB_SIB_oblig", method = "Pearson")
+```
+
+
+## Moral {.tabset}
+
+### ANOVAs {.tabset}
+
+#### STRnSIB
+```{r}
+# returns 2 x 2 within-subject ANOVA results
+aov_moral_STRnSIB <- aov(moral ~ Relation*`Choice Context` + Error(ResponseId/(Relation*`Choice Context`)), data = E1_STRnSIB_long)
+summary(aov_moral_STRnSIB)
+
+# returns eta-sq effect size
+eta_sq(aov_moral_STRnSIB, partial = TRUE)
+```
+
+#### STRnCUZ
+```{r}
+# returns 2 x 2 within-subject ANOVA results
+aov_moral_STRnCUZ <- aov(moral ~ Relation*`Choice Context` + Error(ResponseId/(Relation*`Choice Context`)), data = E1_STRnCUZ_long)
+summary(aov_moral_STRnCUZ)
+
+# returns eta-sq effect size
+eta_sq(aov_moral_STRnCUZ, partial = TRUE)
+```
+
+#### CUZnSIB
+```{r}
+# returns 2 x 2 within-subject ANOVA results
+aov_moral_CUZnSIB <- aov(moral ~ Relation*`Choice Context` + Error(ResponseId/(Relation*`Choice Context`)), data = E1_CUZnSIB_long)
+summary(aov_moral_CUZnSIB)
+
+# returns eta-sq effect size
+eta_sq(aov_moral_CUZnSIB, partial = TRUE)
+```
+
+### t-tests {.tabset}
+
+#### STRnSIB {.tabset}
+
+##### No Choice
+```{r}
+# returns t-test results
+t.test(moral ~ Relation, 
+       data = E1_all_long %>% filter(BSs_cond == "STR vs SIB") %>% filter(`Choice Context` == "No Choice") %>% droplevels(), 
+       paired = T)
+
+# returns dz effect size and 95% CIs
+effsize::cohen.d(moral ~ Relation | Subject(ResponseId),
+                 data = E1_all_long %>% filter(BSs_cond == "STR vs SIB") %>% filter(`Choice Context` == "No Choice") %>% droplevels(), 
+                 paired = T,
+                 within = F) # setting this to false ensures dz is calculated, using difference score
+
+# returns d-av effect size and 95% CIs
+effsize::cohen.d(moral ~ Relation | Subject(ResponseId),
+                 data = E1_all_long %>% filter(BSs_cond == "STR vs SIB") %>% filter(`Choice Context` == "No Choice") %>% droplevels(), 
+                 paired = T,
+                 within = T) # setting this to true ensures d-av is calculated, using raw scores
+
+# returns correlation between variables
+cor_test(data = E1_STRnSIB_clean, "NoChoice_STR_moral", "NoChoice_SIB_moral", method = "Pearson")
+```
+##### Choice
+```{r}
+# returns t-test results
+t.test(moral ~ Relation, 
+       data = E1_all_long %>% filter(BSs_cond == "STR vs SIB") %>% filter(`Choice Context` == "Choice") %>% droplevels(), 
+       paired = T)
+
+# returns dz effect size and 95% CIs
+effsize::cohen.d(moral ~ Relation | Subject(ResponseId),
+                 data = E1_all_long %>% filter(BSs_cond == "STR vs SIB") %>% filter(`Choice Context` == "Choice") %>% droplevels(), 
+                 paired = T,
+                 within = F) # setting this to false ensures dz is calculated, using difference score
+
+# returns d-av effect size and 95% CIs
+effsize::cohen.d(moral ~ Relation | Subject(ResponseId),
+                 data = E1_all_long %>% filter(BSs_cond == "STR vs SIB") %>% filter(`Choice Context` == "Choice") %>% droplevels(), 
+                 paired = T,
+                 within = T) # setting this to true ensures d-av is calculated, using raw scores
+
+# returns correlation between variables
+cor_test(data = E1_STRnSIB_clean, "Choice_STRnSIB_STR_moral", "Choice_STRnSIB_SIB_moral", method = "Pearson")
+```
+
+#### STRnCUZ {.tabset}
+
+##### No Choice
+```{r}
+# returns t-test results
+t.test(moral ~ Relation, 
+       data = E1_all_long %>% filter(BSs_cond == "STR vs CUZ") %>% filter(`Choice Context` == "No Choice") %>% droplevels(), 
+       paired = T)
+
+# returns dz effect size and 95% CIs
+effsize::cohen.d(moral ~ Relation | Subject(ResponseId),
+                 data = E1_all_long %>% filter(BSs_cond == "STR vs CUZ") %>% filter(`Choice Context` == "No Choice") %>% droplevels(), 
+                 paired = T,
+                 within = F) # setting this to false ensures dz is calculated, using difference score
+
+# returns d-av effect size and 95% CIs
+effsize::cohen.d(moral ~ Relation | Subject(ResponseId),
+                 data = E1_all_long %>% filter(BSs_cond == "STR vs CUZ") %>% filter(`Choice Context` == "No Choice") %>% droplevels(), 
+                 paired = T,
+                 within = T) # setting this to true ensures d-av is calculated, using raw scores
+
+# returns correlation between variables
+cor_test(data = E1_STRnCUZ_clean, "NoChoice_STR_moral", "NoChoice_CUZ_moral", method = "Pearson")
+```
+##### Choice
+```{r}
+# returns t-test results
+t.test(moral ~ Relation, 
+       data = E1_all_long %>% filter(BSs_cond == "STR vs CUZ") %>% filter(`Choice Context` == "Choice") %>% droplevels(), 
+       paired = T)
+
+# returns dz effect size and 95% CIs
+effsize::cohen.d(moral ~ Relation | Subject(ResponseId),
+                 data = E1_all_long %>% filter(BSs_cond == "STR vs CUZ") %>% filter(`Choice Context` == "Choice") %>% droplevels(), 
+                 paired = T,
+                 within = F) # setting this to false ensures dz is calculated, using difference score
+
+# returns d-av effect size and 95% CIs
+effsize::cohen.d(moral ~ Relation | Subject(ResponseId),
+                 data = E1_all_long %>% filter(BSs_cond == "STR vs CUZ") %>% filter(`Choice Context` == "Choice") %>% droplevels(), 
+                 paired = T,
+                 within = T) # setting this to true ensures d-av is calculated, using raw scores
+
+# returns correlation between variables
+cor_test(data = E1_STRnCUZ_clean, "Choice_STRnCUZ_STR_moral", "Choice_STRnCUZ_CUZ_moral", method = "Pearson")
+```
+
+#### CUZnSIB {.tabset}
+
+##### No Choice
+```{r}
+# returns t-test results
+t.test(moral ~ Relation, 
+       data = E1_all_long %>% filter(BSs_cond == "CUZ vs SIB") %>% filter(`Choice Context` == "No Choice") %>% droplevels(), 
+       paired = T)
+
+# returns dz effect size and 95% CIs
+effsize::cohen.d(moral ~ Relation | Subject(ResponseId),
+                 data = E1_all_long %>% filter(BSs_cond == "CUZ vs SIB") %>% filter(`Choice Context` == "No Choice") %>% droplevels(), 
+                 paired = T,
+                 within = F) # setting this to false ensures dz is calculated, using difference score
+
+# returns d-av effect size and 95% CIs
+effsize::cohen.d(moral ~ Relation | Subject(ResponseId),
+                 data = E1_all_long %>% filter(BSs_cond == "CUZ vs SIB") %>% filter(`Choice Context` == "No Choice") %>% droplevels(), 
+                 paired = T,
+                 within = T) # setting this to true ensures d-av is calculated, using raw scores
+
+# returns correlation between variables
+cor_test(data = E1_CUZnSIB_clean, "NoChoice_CUZ_moral", "NoChoice_SIB_moral", method = "Pearson")
+```
+##### Choice
+```{r}
+# returns t-test results
+t.test(moral ~ Relation, 
+       data = E1_all_long %>% filter(BSs_cond == "CUZ vs SIB") %>% filter(`Choice Context` == "Choice") %>% droplevels(), 
+       paired = T)
+
+# returns dz effect size and 95% CIs
+effsize::cohen.d(moral ~ Relation | Subject(ResponseId),
+                 data = E1_all_long %>% filter(BSs_cond == "CUZ vs SIB") %>% filter(`Choice Context` == "Choice") %>% droplevels(), 
+                 paired = T,
+                 within = F) # setting this to false ensures dz is calculated, using difference score
+
+# returns d-av effect size and 95% CIs
+effsize::cohen.d(moral ~ Relation | Subject(ResponseId),
+                 data = E1_all_long %>% filter(BSs_cond == "CUZ vs SIB") %>% filter(`Choice Context` == "Choice") %>% droplevels(), 
+                 paired = T,
+                 within = T) # setting this to true ensures d-av is calculated, using raw scores
+
+# returns correlation between variables
+cor_test(data = E1_CUZnSIB_clean, "Choice_CUZnSIB_CUZ_moral", "Choice_CUZnSIB_SIB_moral", method = "Pearson")
+```
+
+
+# Moral Diff ~ Oblig Diff Plots {.tabset} 
+```{r}
+# Create difference score datasets for plotting of diff score correlations
+
+# STRnCUZ
+E1_diff_STRnCUZ_cond_long <- E1_STRnCUZ_clean %>%
+  pivot_longer(
+    cols = c(Dist_Scen, Close_Scen),
+    names_to = "WSs_cond",
+    values_to = "Condition"
+  )
+
+E1_diff_STRnCUZ_oblig_long <- E1_STRnCUZ_clean %>%
+  pivot_longer(
+    cols = c(NoChoice_STRminusCUZ_oblig, Choice_STRminusCUZ_oblig),
+    names_to = "WSs_cond",
+    values_to = "oblig"
+  )
+
+E1_diff_STRnCUZ_moral_long <- E1_STRnCUZ_clean %>%
+  pivot_longer(
+    cols = c(NoChoice_STRminusCUZ_moral, Choice_STRminusCUZ_moral),
+    names_to = "WSs_cond",
+    values_to = "moral"
+  )
+
+# Combine long STRnCUZ datasets, select plotting variables, and create condition variable for `Choice Context` factor
+E1_diff_STRnCUZ_long <- cbind(E1_diff_STRnCUZ_cond_long, E1_diff_STRnCUZ_oblig_long, E1_diff_STRnCUZ_moral_long)
+E1_diff_STRnCUZ_long <- E1_diff_STRnCUZ_long[, !duplicated(colnames(E1_diff_STRnCUZ_long))] # get rid of duplicate columns
+
+E1_diff_STRnCUZ_long <- E1_diff_STRnCUZ_long %>%
+  select(ResponseId,
+         Age:OUS_IB,
+         BSs_cond,
+         WSs_cond,
+         Condition,
+         oblig, moral) %>%
+  mutate(`Choice Context` = case_when(
+    WSs_cond == "Dist_Scen" ~ "No Choice",
+    WSs_cond == "Close_Scen" ~ "Choice"))
+
+# Reorder/rename condition, and participant factors
+E1_diff_STRnCUZ_long$`Choice Context` <- as.factor(E1_diff_STRnCUZ_long$`Choice Context`)
+E1_diff_STRnCUZ_long$`Choice Context` <- ordered(E1_diff_STRnCUZ_long$`Choice Context`, levels = c("No Choice", "Choice"))
+E1_diff_STRnCUZ_long$ResponseId <- as.factor(E1_diff_STRnCUZ_long$ResponseId)
+
+
+# STRnSIB
+E1_diff_STRnSIB_cond_long <- E1_STRnSIB_clean %>%
+  pivot_longer(
+    cols = c(Dist_Scen, Close_Scen),
+    names_to = "WSs_cond",
+    values_to = "Condition"
+  )
+
+E1_diff_STRnSIB_oblig_long <- E1_STRnSIB_clean %>%
+  pivot_longer(
+    cols = c(NoChoice_STRminusSIB_oblig, Choice_STRminusSIB_oblig),
+    names_to = "WSs_cond",
+    values_to = "oblig"
+  )
+
+E1_diff_STRnSIB_moral_long <- E1_STRnSIB_clean %>%
+  pivot_longer(
+    cols = c(NoChoice_STRminusSIB_moral, Choice_STRminusSIB_moral),
+    names_to = "WSs_cond",
+    values_to = "moral"
+  )
+
+# Combine long STRnSIB datasets, select plotting variables, and create condition variable for `Choice Context` factor
+E1_diff_STRnSIB_long <- cbind(E1_diff_STRnSIB_cond_long, E1_diff_STRnSIB_oblig_long, E1_diff_STRnSIB_moral_long)
+E1_diff_STRnSIB_long <- E1_diff_STRnSIB_long[, !duplicated(colnames(E1_diff_STRnSIB_long))] # get rid of duplicate columns
+
+E1_diff_STRnSIB_long <- E1_diff_STRnSIB_long %>%
+  select(ResponseId,
+         Age:OUS_IB,
+         BSs_cond,
+         WSs_cond,
+         Condition,
+         oblig, moral) %>%
+  mutate(`Choice Context` = case_when(
+    WSs_cond == "Dist_Scen" ~ "No Choice",
+    WSs_cond == "Close_Scen" ~ "Choice"))
+
+# Reorder/rename condition, and participant factors
+E1_diff_STRnSIB_long$`Choice Context` <- as.factor(E1_diff_STRnSIB_long$`Choice Context`)
+E1_diff_STRnSIB_long$`Choice Context` <- ordered(E1_diff_STRnSIB_long$`Choice Context`, levels = c("No Choice", "Choice"))
+E1_diff_STRnSIB_long$ResponseId <- as.factor(E1_diff_STRnSIB_long$ResponseId)
+
+
+# CUZnSIB
+E1_diff_CUZnSIB_cond_long <- E1_CUZnSIB_clean %>%
+  pivot_longer(
+    cols = c(Dist_Scen, Close_Scen),
+    names_to = "WSs_cond",
+    values_to = "Condition"
+  )
+
+E1_diff_CUZnSIB_oblig_long <- E1_CUZnSIB_clean %>%
+  pivot_longer(
+    cols = c(NoChoice_CUZminusSIB_oblig, Choice_CUZminusSIB_oblig),
+    names_to = "WSs_cond",
+    values_to = "oblig"
+  )
+
+E1_diff_CUZnSIB_moral_long <- E1_CUZnSIB_clean %>%
+  pivot_longer(
+    cols = c(NoChoice_CUZminusSIB_moral, Choice_CUZminusSIB_moral),
+    names_to = "WSs_cond",
+    values_to = "moral"
+  )
+
+# Combine long CUZnSIB datasets, select plotting variables, and create condition variable for `Choice Context` factor
+E1_diff_CUZnSIB_long <- cbind(E1_diff_CUZnSIB_cond_long, E1_diff_CUZnSIB_oblig_long, E1_diff_CUZnSIB_moral_long)
+E1_diff_CUZnSIB_long <- E1_diff_CUZnSIB_long[, !duplicated(colnames(E1_diff_CUZnSIB_long))] # get rid of duplicate columns
+
+E1_diff_CUZnSIB_long <- E1_diff_CUZnSIB_long %>%
+  select(ResponseId,
+         Age:OUS_IB,
+         BSs_cond,
+         WSs_cond,
+         Condition,
+         oblig, moral) %>%
+  mutate(`Choice Context` = case_when(
+    WSs_cond == "Dist_Scen" ~ "No Choice",
+    WSs_cond == "Close_Scen" ~ "Choice"))
+
+# Reorder/rename condition, and participant factors
+E1_diff_CUZnSIB_long$`Choice Context` <- as.factor(E1_diff_CUZnSIB_long$`Choice Context`)
+E1_diff_CUZnSIB_long$`Choice Context` <- ordered(E1_diff_CUZnSIB_long$`Choice Context`, levels = c("No Choice", "Choice"))
+E1_diff_CUZnSIB_long$ResponseId <- as.factor(E1_diff_CUZnSIB_long$ResponseId)
+
+
+# Combine into one dataset for plotting
+E1_diff_all_long <- rbind(E1_diff_STRnSIB_long, E1_diff_STRnCUZ_long, E1_diff_CUZnSIB_long)
+# Reorder All_long BSs_cond
+E1_diff_all_long$BSs_cond <- as.factor(E1_diff_all_long$BSs_cond)
+E1_diff_all_long$BSs_cond <- ordered(E1_diff_all_long$BSs_cond, levels = c("STR vs SIB", "STR vs CUZ", "CUZ vs SIB"))
+```
+
+## STRnSIB
+```{r, fig.width = 14, fig.height = 9, out.width = "75%", out.height = "75%"}
+print(oblig_moral_diff_plot_STRnSIB <- ggplot(data = E1_diff_STRnSIB_long, aes(x = oblig, y = moral)) +
+        geom_jitter(color = "darkorchid1", alpha = 0.5) +
+        geom_smooth(method = 'lm', color = "darkorchid1") +
+        facet_wrap(BSs_cond~`Choice Context`) +
+        scale_x_continuous(limits = c(-101,101), breaks = c(-100,-50,0,50,100)) +
+        scale_y_continuous(limits = c(-101,101), breaks = c(-100,-50,0,50,100)) +
+        theme_classic() +
+        xlab("Obligation Strength Difference (Distant - Close)") +
+        ylab("Moral Character Difference (Distant - Close)") +
+        theme(axis.title.x = element_text(size = 14), 
+              axis.title.y = element_text(size = 14),
+              axis.text.x = element_text(color = "black", size = 12), 
+              axis.text.y = element_text(color = "black", size = 12)))
+```
+## STRnCUZ
+```{r, fig.width = 14, fig.height = 9, out.width = "75%", out.height = "75%"}
+print(oblig_moral_diff_plot_STRnCUZ <- ggplot(data = E1_diff_STRnCUZ_long, aes(x = oblig, y = moral)) +
+        geom_jitter(color = "darkorchid1", alpha = 0.5) +
+        geom_smooth(method = 'lm', color = "darkorchid1") +
+        facet_wrap(BSs_cond~`Choice Context`) +
+        scale_x_continuous(limits = c(-101,101), breaks = c(-100,-50,0,50,100)) +
+        scale_y_continuous(limits = c(-101,101), breaks = c(-100,-50,0,50,100)) +
+        theme_classic() +
+        xlab("Obligation Strength Difference (Distant - Close)") +
+        ylab("Moral Character Difference (Distant - Close)") +
+        theme(axis.title.x = element_text(size = 14), 
+              axis.title.y = element_text(size = 14),
+              axis.text.x = element_text(color = "black", size = 12), 
+              axis.text.y = element_text(color = "black", size = 12)))
+```
+## CUZnSIB
+```{r, fig.width = 14, fig.height = 9, out.width = "75%", out.height = "75%"}
+print(oblig_moral_diff_plot_CUZnSIB <- ggplot(data = E1_diff_CUZnSIB_long, aes(x = oblig, y = moral)) +
+        geom_jitter(color = "darkorchid1", alpha = 0.5) +
+        geom_smooth(method = 'lm', color = "darkorchid1") +
+        facet_wrap(BSs_cond~`Choice Context`) +
+        scale_x_continuous(limits = c(-101,101), breaks = c(-100,-50,0,50,100)) +
+        scale_y_continuous(limits = c(-101,101), breaks = c(-100,-50,0,50,100)) +
+        theme_classic() +
+        xlab("Obligation Strength Difference (Distant - Close)") +
+        ylab("Moral Character Difference (Distant - Close)") +
+        theme(axis.title.x = element_text(size = 14), 
+              axis.title.y = element_text(size = 14),
+              axis.text.x = element_text(color = "black", size = 12), 
+              axis.text.y = element_text(color = "black", size = 12)))
+```
+## Combined
+```{r, fig.width = 14, fig.height = 9, out.width = "75%", out.height = "75%"}
+print(oblig_moral_diff_plot_combined <- ggplot(data = E1_diff_all_long, aes(x = oblig, y = moral)) +
+        geom_jitter(color = "darkorchid1", alpha = 0.5) +
+        geom_smooth(method = 'lm', color = "darkorchid1") +
+        facet_wrap(BSs_cond~`Choice Context`, nrow = 3) +
+        scale_x_continuous(limits = c(-101,101), breaks = c(-100,-50,0,50,100)) +
+        scale_y_continuous(limits = c(-101,101), breaks = c(-100,-50,0,50,100)) +
+        theme_classic() +
+        xlab("\nObligation Strength Difference (Distant - Close)") +
+        ylab("Moral Character Difference (Distant - Close)\n") +
+        theme(axis.title.x = element_text(size = 18), 
+              axis.title.y = element_text(size = 18),
+              axis.text.x = element_text(color = "black", size = 16), 
+              axis.text.y = element_text(color = "black", size = 16),
+              strip.text.x = element_text(color = "black", size = 16)))
+
+ggsave("E1_moral~oblig_plot.png")
+```
+
+
+# Moral Diff ~ Oblig Diff Tests {.tabset}
+
+<br>
+
+See our pre-registration (https://osf.io/6q4kr/?view_only=8033c65c9dfc41bcbc528fe94409e4e8) and manuscript for our predictions about the relationship between obligation differences and moral character differences.
+
+<br>
+
+## STRnSIB {.tabset}
+
+### No Choice
+```{r}
+# pearson's r
+cor_test(E1_STRnSIB_clean, "NoChoice_STRminusSIB_oblig", "NoChoice_STRminusSIB_moral", method = "Pearson")
+```
+### Choice
+```{r}
+# pearson's r
+cor_test(E1_STRnSIB_clean, "Choice_STRminusSIB_oblig", "Choice_STRminusSIB_moral", method = "Pearson")
+```
+
+## STRnCUZ {.tabset}
+
+### No Choice
+```{r}
+# pearson's r
+cor_test(E1_STRnCUZ_clean, "NoChoice_STRminusCUZ_oblig", "NoChoice_STRminusCUZ_moral", method = "Pearson")
+```
+### Choice
+```{r}
+# pearson's r
+cor_test(E1_STRnCUZ_clean, "Choice_STRminusCUZ_oblig", "Choice_STRminusCUZ_moral", method = "Pearson")
+```
+
+## CUZnSIB {.tabset}
+
+### No Choice
+```{r}
+# pearson's r
+cor_test(E1_CUZnSIB_clean, "NoChoice_CUZminusSIB_oblig", "NoChoice_CUZminusSIB_moral", method = "Pearson")
+```
+### Choice
+```{r}
+# pearson's r
+cor_test(E1_CUZnSIB_clean, "Choice_CUZminusSIB_oblig", "Choice_CUZminusSIB_moral", method = "Pearson")
+```
+
+
+# Moral ~ Oblig R-M Plots {.tabset}
+
+## STRnSIB {.tabset}
+
+### No Choice
+```{r}
+rmcorr_STRnSIB_NoChoice <- rmcorr(participant = ResponseId, 
+                                  measure1 = oblig, 
+                                  measure2 = moral, 
+                                  dataset = E1_all_long %>%
+                                    filter(BSs_cond == "STR vs SIB") %>%
+                                             filter(`Choice Context` == "No Choice"))
+```
+```{r, fig.width = 14, fig.height = 9, out.width = "75%", out.height = "75%"}
+print(rmcorr_plot_STRnSIB_NoChoice <- ggplot(data = E1_all_long %>% 
+                                         filter(BSs_cond == "STR vs SIB") %>% 
+                                         filter(`Choice Context` == "No Choice"),
+                                       aes(x = oblig, y = moral, group = ResponseId, color = ResponseId)) +
+                                         geom_point(aes(color = ResponseId)) +
+                                         geom_line(aes(y = rmcorr_STRnSIB_NoChoice$model$fitted.values), linetype = 1) +
+                                         scale_x_continuous(limits = c(-1,101), breaks = c(0,25,50,75,100)) +
+                                         scale_y_continuous(limits = c(-1,101), breaks = c(0,25,50,75,100)) +
+                                         theme_classic() +
+                                         xlab("Obligation Strength") +
+                                         ylab("Moral Character") +
+                                         theme(axis.title.x = element_text(size = 14), 
+                                               axis.title.y = element_text(size = 14),
+                                               axis.text.x = element_text(color = "black", size = 12), 
+                                               axis.text.y = element_text(color = "black", size = 12),
+                                               legend.position = "none"))
+```
+### Choice
+```{r}
+rmcorr_STRnSIB_Choice <- rmcorr(participant = ResponseId, 
+                                  measure1 = oblig, 
+                                  measure2 = moral, 
+                                  dataset = E1_all_long %>%
+                                    filter(BSs_cond == "STR vs SIB") %>%
+                                             filter(`Choice Context` == "Choice"))
+```
+```{r, fig.width = 14, fig.height = 9, out.width = "75%", out.height = "75%"}
+print(rmcorr_plot_STRnSIB_Choice <- ggplot(data = E1_all_long %>% 
+                                         filter(BSs_cond == "STR vs SIB") %>% 
+                                         filter(`Choice Context` == "Choice"),
+                                       aes(x = oblig, y = moral, group = ResponseId, color = ResponseId)) +
+                                         geom_point(aes(color = ResponseId)) +
+                                         geom_line(aes(y = rmcorr_STRnSIB_Choice$model$fitted.values), linetype = 1) +
+                                         scale_x_continuous(limits = c(-1,101), breaks = c(0,25,50,75,100)) +
+                                         scale_y_continuous(limits = c(-1,101), breaks = c(0,25,50,75,100)) +
+                                         theme_classic() +
+                                         xlab("Obligation Strength") +
+                                         ylab("Moral Character") +
+                                         theme(axis.title.x = element_text(size = 14), 
+                                               axis.title.y = element_text(size = 14),
+                                               axis.text.x = element_text(color = "black", size = 12), 
+                                               axis.text.y = element_text(color = "black", size = 12),
+                                               legend.position = "none"))
+```
+
+## STRnCUZ {.tabset}
+
+### No Choice
+```{r}
+rmcorr_STRnCUZ_NoChoice <- rmcorr(participant = ResponseId, 
+                                  measure1 = oblig, 
+                                  measure2 = moral, 
+                                  dataset = E1_all_long %>%
+                                    filter(BSs_cond == "STR vs CUZ") %>%
+                                             filter(`Choice Context` == "No Choice"))
+```
+```{r, fig.width = 14, fig.height = 9, out.width = "75%", out.height = "75%"}
+print(rmcorr_plot_STRnCUZ_NoChoice <- ggplot(data = E1_all_long %>% 
+                                         filter(BSs_cond == "STR vs CUZ") %>% 
+                                         filter(`Choice Context` == "No Choice"),
+                                       aes(x = oblig, y = moral, group = ResponseId, color = ResponseId)) +
+                                         geom_point(aes(color = ResponseId)) +
+                                         geom_line(aes(y = rmcorr_STRnCUZ_NoChoice$model$fitted.values), linetype = 1) +
+                                         scale_x_continuous(limits = c(-1,101), breaks = c(0,25,50,75,100)) +
+                                         scale_y_continuous(limits = c(-1,101), breaks = c(0,25,50,75,100)) +
+                                         theme_classic() +
+                                         xlab("Obligation Strength") +
+                                         ylab("Moral Character") +
+                                         theme(axis.title.x = element_text(size = 14), 
+                                               axis.title.y = element_text(size = 14),
+                                               axis.text.x = element_text(color = "black", size = 12), 
+                                               axis.text.y = element_text(color = "black", size = 12),
+                                               legend.position = "none"))
+```
+### Choice
+```{r}
+rmcorr_STRnCUZ_Choice <- rmcorr(participant = ResponseId, 
+                                  measure1 = oblig, 
+                                  measure2 = moral, 
+                                  dataset = E1_all_long %>%
+                                    filter(BSs_cond == "STR vs CUZ") %>%
+                                             filter(`Choice Context` == "Choice"))
+```
+```{r, fig.width = 14, fig.height = 9, out.width = "75%", out.height = "75%"}
+print(rmcorr_plot_STRnCUZ_Choice <- ggplot(data = E1_all_long %>% 
+                                         filter(BSs_cond == "STR vs CUZ") %>% 
+                                         filter(`Choice Context` == "Choice"),
+                                       aes(x = oblig, y = moral, group = ResponseId, color = ResponseId)) +
+                                         geom_point(aes(color = ResponseId)) +
+                                         geom_line(aes(y = rmcorr_STRnCUZ_Choice$model$fitted.values), linetype = 1) +
+                                         scale_x_continuous(limits = c(-1,101), breaks = c(0,25,50,75,100)) +
+                                         scale_y_continuous(limits = c(-1,101), breaks = c(0,25,50,75,100)) +
+                                         theme_classic() +
+                                         xlab("Obligation Strength") +
+                                         ylab("Moral Character") +
+                                         theme(axis.title.x = element_text(size = 14), 
+                                               axis.title.y = element_text(size = 14),
+                                               axis.text.x = element_text(color = "black", size = 12), 
+                                               axis.text.y = element_text(color = "black", size = 12),
+                                               legend.position = "none"))
+```
+
+## CUZnSIB {.tabset}
+
+### No Choice
+```{r}
+rmcorr_CUZnSIB_NoChoice <- rmcorr(participant = ResponseId, 
+                                  measure1 = oblig, 
+                                  measure2 = moral, 
+                                  dataset = E1_all_long %>%
+                                    filter(BSs_cond == "CUZ vs SIB") %>%
+                                             filter(`Choice Context` == "No Choice"))
+```
+```{r, fig.width = 14, fig.height = 9, out.width = "75%", out.height = "75%"}
+print(rmcorr_plot_CUZnSIB_NoChoice <- ggplot(data = E1_all_long %>% 
+                                         filter(BSs_cond == "CUZ vs SIB") %>% 
+                                         filter(`Choice Context` == "No Choice"),
+                                       aes(x = oblig, y = moral, group = ResponseId, color = ResponseId)) +
+                                         geom_point(aes(color = ResponseId)) +
+                                         geom_line(aes(y = rmcorr_CUZnSIB_NoChoice$model$fitted.values), linetype = 1) +
+                                         scale_x_continuous(limits = c(-1,101), breaks = c(0,25,50,75,100)) +
+                                         scale_y_continuous(limits = c(-1,101), breaks = c(0,25,50,75,100)) +
+                                         theme_classic() +
+                                         xlab("Obligation Strength") +
+                                         ylab("Moral Character") +
+                                         theme(axis.title.x = element_text(size = 14), 
+                                               axis.title.y = element_text(size = 14),
+                                               axis.text.x = element_text(color = "black", size = 12), 
+                                               axis.text.y = element_text(color = "black", size = 12),
+                                               legend.position = "none"))
+```
+### Choice
+```{r}
+rmcorr_CUZnSIB_Choice <- rmcorr(participant = ResponseId, 
+                                  measure1 = oblig, 
+                                  measure2 = moral, 
+                                  dataset = E1_all_long %>%
+                                    filter(BSs_cond == "CUZ vs SIB") %>%
+                                             filter(`Choice Context` == "Choice"))
+```
+```{r, fig.width = 14, fig.height = 9, out.width = "75%", out.height = "75%"}
+print(rmcorr_plot_CUZnSIB_Choice <- ggplot(data = E1_all_long %>% 
+                                         filter(BSs_cond == "CUZ vs SIB") %>% 
+                                         filter(`Choice Context` == "Choice"),
+                                       aes(x = oblig, y = moral, group = ResponseId, color = ResponseId)) +
+                                         geom_point(aes(color = ResponseId)) +
+                                         geom_line(aes(y = rmcorr_CUZnSIB_Choice$model$fitted.values), linetype = 1) +
+                                         scale_x_continuous(limits = c(-1,101), breaks = c(0,25,50,75,100)) +
+                                         scale_y_continuous(limits = c(-1,101), breaks = c(0,25,50,75,100)) +
+                                         theme_classic() +
+                                         xlab("Obligation Strength") +
+                                         ylab("Moral Character") +
+                                         theme(axis.title.x = element_text(size = 14), 
+                                               axis.title.y = element_text(size = 14),
+                                               axis.text.x = element_text(color = "black", size = 12), 
+                                               axis.text.y = element_text(color = "black", size = 12),
+                                               legend.position = "none"))
+```
+
+
+# Moral ~ Oblig R-M Tests {.tabset}
+
+<br>
+
+See our manuscript for our predictions about the within-individual relationship between obligation judgments and moral character judgments.
+
+<br>
+
+## STRnSIB {.tabset}
+
+### No Choice
+```{r}
+print(rmcorr_STRnSIB_NoChoice)
+```
+### Choice
+```{r}
+print(rmcorr_STRnSIB_Choice)
+```
+
+## STRnCUZ {.tabset}
+
+### No Choice
+```{r}
+print(rmcorr_STRnCUZ_NoChoice)
+```
+### Choice
+```{r}
+print(rmcorr_STRnCUZ_Choice)
+```
+
+## CUZnSIB {.tabset}
+
+### No Choice
+```{r}
+print(rmcorr_CUZnSIB_NoChoice)
+```
+### Choice
+```{r}
+print(rmcorr_CUZnSIB_Choice)
+```
+
+
+# Ind. Diff Internal Reliabilty Tests {.tabset}
+
+## MAC Family Values {.tabset}
+
+### STRnSIB
+```{r}
+# create dataset with only MAC Family Values variables
+E1_STRnSIB_clean_MAConly <- E1_STRnSIB_clean %>% select(MAC_Jud_1:MAC_Rel_3)
+
+psych::alpha(E1_STRnSIB_clean_MAConly)
+```
+### STRnCUZ
+```{r}
+# create dataset with only MAC Family Values variables
+E1_STRnCUZ_clean_MAConly <- E1_STRnCUZ_clean %>% select(MAC_Jud_1:MAC_Rel_3)
+
+psych::alpha(E1_STRnCUZ_clean_MAConly)
+```
+### CUZnSIB
+```{r}
+# create dataset with only MAC Family Values variables
+E1_CUZnSIB_clean_MAConly <- E1_CUZnSIB_clean %>% select(MAC_Jud_1:MAC_Rel_3)
+
+psych::alpha(E1_CUZnSIB_clean_MAConly)
+```
+
+## MFT Ingroup Loyalty {.tabset}
+
+### STRnSIB
+```{r}
+# create dataset with only MFQ Family Values variables
+E1_STRnSIB_clean_MFQonly <- E1_STRnSIB_clean %>% select(MFQ_Jud_1:MFQ_Rel_3)
+
+psych::alpha(E1_STRnSIB_clean_MFQonly)
+```
+### STRnCUZ
+```{r}
+# create dataset with only MFQ Family Values variables
+E1_STRnCUZ_clean_MFQonly <- E1_STRnCUZ_clean %>% select(MFQ_Jud_1:MFQ_Rel_3)
+
+psych::alpha(E1_STRnCUZ_clean_MFQonly)
+```
+### CUZnSIB
+```{r}
+# create dataset with only MFQ Family Values variables
+E1_CUZnSIB_clean_MFQonly <- E1_CUZnSIB_clean %>% select(MFQ_Jud_1:MFQ_Rel_3)
+
+psych::alpha(E1_CUZnSIB_clean_MFQonly)
+```
+
+## OUS Impartial Beneficence {.tabset}
+
+### STRnSIB
+```{r}
+# create dataset with only MFQ Family Values variables
+E1_STRnSIB_clean_OUSonly <- E1_STRnSIB_clean %>% select(OUS_IB1:OUS_IB5)
+
+psych::alpha(E1_STRnSIB_clean_OUSonly)
+```
+### STRnCUZ
+```{r}
+# create dataset with only MFQ Family Values variables
+E1_STRnCUZ_clean_OUSonly <- E1_STRnCUZ_clean %>% select(OUS_IB1:OUS_IB5)
+
+psych::alpha(E1_STRnCUZ_clean_OUSonly)
+```
+### CUZnSIB
+```{r}
+# create dataset with only MFQ Family Values variables
+E1_CUZnSIB_clean_OUSonly <- E1_CUZnSIB_clean %>% select(OUS_IB1:OUS_IB5)
+
+psych::alpha(E1_CUZnSIB_clean_OUSonly)
+```
+
+
+# Oblig ~ Ind. Diff Plots {.tabset}
+
+## MAC Family Values
+```{r, fig.width = 14, fig.height = 9, out.width = "75%", out.height = "75%"}
+print(oblig_mac_comp_plot <- ggplot(data = E1_all_long, aes(x = MAC_Fam_Combined, y = oblig, color = Relation)) +
+                                            geom_jitter(aes(color = Relation), alpha = 0.5) +
+                                            scale_color_manual(values = c("lightskyblue3", "indianred3")) +
+                                            geom_smooth(method = 'lm') +
+                                            facet_wrap(BSs_cond~`Choice Context`, ncol = 2) +
+                                            scale_x_continuous(limits = c(-1,101), breaks = c(0,25,50,75,100)) +
+                                            scale_y_continuous(limits = c(-1,101), breaks = c(0,25,50,75,100)) +
+                                            theme_classic() +
+                                            xlab("\nMAC Family Values Composite") +
+                                            ylab("Obligation Strength\n") +
+                                                    theme(axis.title.x = element_text(size = 18), 
+                                                    axis.title.y = element_text(size = 18),
+                                                    axis.text.x = element_text(color = "black", size = 16), 
+                                                    axis.text.y = element_text(color = "black", size = 16),
+                                                    strip.text.x = element_text(color = "black", size = 16),
+                                                    legend.position = "right",
+                                                    legend.title = element_text(color = "black", size = 18),
+                                                    legend.text = element_text(color = "black", size = 16)))
+
+ggsave("E1_oblig~MAC_plot.png")
+```
+
+## MFT Ingroup Loyalty
+```{r, fig.width = 14, fig.height = 9, out.width = "75%", out.height = "75%"}
+print(oblig_mft_comp_plot <- ggplot(data = E1_all_long, aes(x = MFQ_Loyalty_Combined, y = oblig, color = Relation)) +
+                                            geom_jitter(aes(color = Relation), alpha = 0.5) +
+                                            scale_color_manual(values = c("lightskyblue3", "indianred3")) +
+                                            geom_smooth(method = 'lm') +
+                                            facet_wrap(BSs_cond~`Choice Context`, ncol = 2) +
+                                            scale_x_continuous(limits = c(.5,6.5), breaks = c(1,2,3,4,5,6)) +
+                                            scale_y_continuous(limits = c(-1,101), breaks = c(0,25,50,75,100)) +
+                                            theme_classic() +
+                                            xlab("\nMFT Ingroup Loyalty Composite") +
+                                            ylab("Obligation Strength\n") +
+                                                    theme(axis.title.x = element_text(size = 18), 
+                                                    axis.title.y = element_text(size = 18),
+                                                    axis.text.x = element_text(color = "black", size = 16), 
+                                                    axis.text.y = element_text(color = "black", size = 16),
+                                                    strip.text.x = element_text(color = "black", size = 16),
+                                                    legend.position = "right",
+                                                    legend.title = element_text(color = "black", size = 18),
+                                                    legend.text = element_text(color = "black", size = 16)))
+
+ggsave("E1_oblig~MFT_plot.png")
+```
+
+## OUS Impartial Beneficence
+```{r, fig.width = 14, fig.height = 9, out.width = "75%", out.height = "75%"}
+print(oblig_ous_comp_plot <- ggplot(data = E1_all_long, aes(x = OUS_IB, y = oblig, color = Relation)) +
+                                            geom_jitter(aes(color = Relation), alpha = 0.5) +
+                                            scale_color_manual(values = c("lightskyblue3", "indianred3")) +
+                                            geom_smooth(method = 'lm') +
+                                            facet_wrap(BSs_cond~`Choice Context`, ncol = 2) +
+                                            scale_x_continuous(limits = c(.5,7.5), breaks = c(1,2,3,4,5,6,7)) +
+                                            scale_y_continuous(limits = c(-1,101), breaks = c(0,25,50,75,100)) +
+                                            theme_classic() +
+                                            xlab("\nOUS Impartial Beneficence Composite") +
+                                            ylab("Obligation Strength\n") +
+                                                    theme(axis.title.x = element_text(size = 18), 
+                                                    axis.title.y = element_text(size = 18),
+                                                    axis.text.x = element_text(color = "black", size = 16), 
+                                                    axis.text.y = element_text(color = "black", size = 16),
+                                                    strip.text.x = element_text(color = "black", size = 16),
+                                                    legend.position = "right",
+                                                    legend.title = element_text(color = "black", size = 18),
+                                                    legend.text = element_text(color = "black", size = 16)))
+
+ggsave("E1_oblig~OUS_plot.png")
+```
+
+# Oblig ~ Ind. Diff Tests {.tabset}
+
+<br>
+
+See our pre-registration (https://osf.io/6q4kr/?view_only=8033c65c9dfc41bcbc528fe94409e4e8) and manuscript for our predictions about the relationship between individual differences and obligation judgments.
+
+<br>
+
+## MAC Family Values {.tabset}
+
+### STRnSIB {.tabset}
+
+#### No Choice
+```{r}
+# distant pearson's r
+cor_test(E1_STRnSIB_clean, "MAC_Fam_Combined", "NoChoice_STR_oblig", method = "Pearson")
+
+# close pearson's r
+cor_test(E1_STRnSIB_clean, "MAC_Fam_Combined", "NoChoice_SIB_oblig", method = "Pearson")
+
+# diff pearson's r
+cor_test(E1_STRnSIB_clean, "MAC_Fam_Combined", "NoChoice_STRminusSIB_oblig", method = "Pearson")
+```
+#### Choice
+```{r}
+# distant pearson's r
+cor_test(E1_STRnSIB_clean, "MAC_Fam_Combined", "Choice_STRnSIB_STR_oblig", method = "Pearson")
+
+# distant pearson's r
+cor_test(E1_STRnSIB_clean, "MAC_Fam_Combined", "Choice_STRnSIB_SIB_oblig", method = "Pearson")
+
+# diff pearson's r
+cor_test(E1_STRnSIB_clean, "MAC_Fam_Combined", "Choice_STRminusSIB_oblig", method = "Pearson")
+```
+
+### STRnCUZ {.tabset}
+
+#### No Choice
+```{r}
+# distant pearson's r
+cor_test(E1_STRnCUZ_clean, "MAC_Fam_Combined", "NoChoice_STR_oblig", method = "Pearson")
+
+# close pearson's r
+cor_test(E1_STRnCUZ_clean, "MAC_Fam_Combined", "NoChoice_CUZ_oblig", method = "Pearson")
+
+# diff pearson's r
+cor_test(E1_STRnCUZ_clean, "MAC_Fam_Combined", "NoChoice_STRminusCUZ_oblig", method = "Pearson")
+```
+#### Choice
+```{r}
+# distant pearson's r
+cor_test(E1_STRnCUZ_clean, "MAC_Fam_Combined", "Choice_STRnCUZ_STR_oblig", method = "Pearson")
+
+# distant pearson's r
+cor_test(E1_STRnCUZ_clean, "MAC_Fam_Combined", "Choice_STRnCUZ_CUZ_oblig", method = "Pearson")
+
+# diff pearson's r
+cor_test(E1_STRnCUZ_clean, "MAC_Fam_Combined", "Choice_STRminusCUZ_oblig", method = "Pearson")
+```
+
+### CUZnSIB {.tabset}
+
+#### No Choice
+```{r}
+# distant pearson's r
+cor_test(E1_CUZnSIB_clean, "MAC_Fam_Combined", "NoChoice_CUZ_oblig", method = "Pearson")
+
+# close pearson's r
+cor_test(E1_CUZnSIB_clean, "MAC_Fam_Combined", "NoChoice_SIB_oblig", method = "Pearson")
+
+# diff pearson's r
+cor_test(E1_CUZnSIB_clean, "MAC_Fam_Combined", "NoChoice_CUZminusSIB_oblig", method = "Pearson")
+```
+#### Choice
+```{r}
+# distant pearson's r
+cor_test(E1_CUZnSIB_clean, "MAC_Fam_Combined", "Choice_CUZnSIB_CUZ_oblig", method = "Pearson")
+
+# distant pearson's r
+cor_test(E1_CUZnSIB_clean, "MAC_Fam_Combined", "Choice_CUZnSIB_SIB_oblig", method = "Pearson")
+
+# diff pearson's r
+cor_test(E1_CUZnSIB_clean, "MAC_Fam_Combined", "Choice_CUZminusSIB_oblig", method = "Pearson")
+```
+
+
+## MFT Ingroup Loyalty {.tabset}
+
+### STRnSIB {.tabset}
+
+#### No Choice
+```{r}
+# distant pearson's r
+cor_test(E1_STRnSIB_clean, "MFQ_Loyalty_Combined", "NoChoice_STR_oblig", method = "Pearson")
+
+# close pearson's r
+cor_test(E1_STRnSIB_clean, "MFQ_Loyalty_Combined", "NoChoice_SIB_oblig", method = "Pearson")
+
+# diff pearson's r
+cor_test(E1_STRnSIB_clean, "MFQ_Loyalty_Combined", "NoChoice_STRminusSIB_oblig", method = "Pearson")
+```
+#### Choice
+```{r}
+# distant pearson's r
+cor_test(E1_STRnSIB_clean, "MFQ_Loyalty_Combined", "Choice_STRnSIB_STR_oblig", method = "Pearson")
+
+# distant pearson's r
+cor_test(E1_STRnSIB_clean, "MFQ_Loyalty_Combined", "Choice_STRnSIB_SIB_oblig", method = "Pearson")
+
+# diff pearson's r
+cor_test(E1_STRnSIB_clean, "MFQ_Loyalty_Combined", "Choice_STRminusSIB_oblig", method = "Pearson")
+```
+
+### STRnCUZ {.tabset}
+
+#### No Choice
+```{r}
+# distant pearson's r
+cor_test(E1_STRnCUZ_clean, "MFQ_Loyalty_Combined", "NoChoice_STR_oblig", method = "Pearson")
+
+# close pearson's r
+cor_test(E1_STRnCUZ_clean, "MFQ_Loyalty_Combined", "NoChoice_CUZ_oblig", method = "Pearson")
+
+# diff pearson's r
+cor_test(E1_STRnCUZ_clean, "MFQ_Loyalty_Combined", "NoChoice_STRminusCUZ_oblig", method = "Pearson")
+```
+#### Choice
+```{r}
+# distant pearson's r
+cor_test(E1_STRnCUZ_clean, "MFQ_Loyalty_Combined", "Choice_STRnCUZ_STR_oblig", method = "Pearson")
+
+# distant pearson's r
+cor_test(E1_STRnCUZ_clean, "MFQ_Loyalty_Combined", "Choice_STRnCUZ_CUZ_oblig", method = "Pearson")
+
+# diff pearson's r
+cor_test(E1_STRnCUZ_clean, "MFQ_Loyalty_Combined", "Choice_STRminusCUZ_oblig", method = "Pearson")
+```
+
+### CUZnSIB {.tabset}
+
+#### No Choice
+```{r}
+# distant pearson's r
+cor_test(E1_CUZnSIB_clean, "MFQ_Loyalty_Combined", "NoChoice_CUZ_oblig", method = "Pearson")
+
+# close pearson's r
+cor_test(E1_CUZnSIB_clean, "MFQ_Loyalty_Combined", "NoChoice_SIB_oblig", method = "Pearson")
+
+# diff pearson's r
+cor_test(E1_CUZnSIB_clean, "MFQ_Loyalty_Combined", "NoChoice_CUZminusSIB_oblig", method = "Pearson")
+```
+#### Choice
+```{r}
+# distant pearson's r
+cor_test(E1_CUZnSIB_clean, "MFQ_Loyalty_Combined", "Choice_CUZnSIB_CUZ_oblig", method = "Pearson")
+
+# distant pearson's r
+cor_test(E1_CUZnSIB_clean, "MFQ_Loyalty_Combined", "Choice_CUZnSIB_SIB_oblig", method = "Pearson")
+
+# diff pearson's r
+cor_test(E1_CUZnSIB_clean, "MFQ_Loyalty_Combined", "Choice_CUZminusSIB_oblig", method = "Pearson")
+```
+
+
+## OUS Impartial Beneficence {.tabset}
+
+### STRnSIB {.tabset}
+
+#### No Choice
+```{r}
+# distant pearson's r
+cor_test(E1_STRnSIB_clean, "OUS_IB", "NoChoice_STR_oblig", method = "Pearson")
+
+# close pearson's r
+cor_test(E1_STRnSIB_clean, "OUS_IB", "NoChoice_SIB_oblig", method = "Pearson")
+
+# diff pearson's r
+cor_test(E1_STRnSIB_clean, "OUS_IB", "NoChoice_STRminusSIB_oblig", method = "Pearson")
+```
+#### Choice
+```{r}
+# distant pearson's r
+cor_test(E1_STRnSIB_clean, "OUS_IB", "Choice_STRnSIB_STR_oblig", method = "Pearson")
+
+# distant pearson's r
+cor_test(E1_STRnSIB_clean, "OUS_IB", "Choice_STRnSIB_SIB_oblig", method = "Pearson")
+
+# diff pearson's r
+cor_test(E1_STRnSIB_clean, "OUS_IB", "Choice_STRminusSIB_oblig", method = "Pearson")
+```
+
+### STRnCUZ {.tabset}
+
+#### No Choice
+```{r}
+# distant pearson's r
+cor_test(E1_STRnCUZ_clean, "OUS_IB", "NoChoice_STR_oblig", method = "Pearson")
+
+# close pearson's r
+cor_test(E1_STRnCUZ_clean, "OUS_IB", "NoChoice_CUZ_oblig", method = "Pearson")
+
+# diff pearson's r
+cor_test(E1_STRnCUZ_clean, "OUS_IB", "NoChoice_STRminusCUZ_oblig", method = "Pearson")
+```
+#### Choice
+```{r}
+# distant pearson's r
+cor_test(E1_STRnCUZ_clean, "OUS_IB", "Choice_STRnCUZ_STR_oblig", method = "Pearson")
+
+# distant pearson's r
+cor_test(E1_STRnCUZ_clean, "OUS_IB", "Choice_STRnCUZ_CUZ_oblig", method = "Pearson")
+
+# diff pearson's r
+cor_test(E1_STRnCUZ_clean, "OUS_IB", "Choice_STRminusCUZ_oblig", method = "Pearson")
+```
+
+### CUZnSIB {.tabset}
+
+#### No Choice
+```{r}
+# distant pearson's r
+cor_test(E1_CUZnSIB_clean, "OUS_IB", "NoChoice_CUZ_oblig", method = "Pearson")
+
+# close pearson's r
+cor_test(E1_CUZnSIB_clean, "OUS_IB", "NoChoice_SIB_oblig", method = "Pearson")
+
+# diff pearson's r
+cor_test(E1_CUZnSIB_clean, "OUS_IB", "NoChoice_CUZminusSIB_oblig", method = "Pearson")
+```
+#### Choice
+```{r}
+# distant pearson's r
+cor_test(E1_CUZnSIB_clean, "OUS_IB", "Choice_CUZnSIB_CUZ_oblig", method = "Pearson")
+
+# distant pearson's r
+cor_test(E1_CUZnSIB_clean, "OUS_IB", "Choice_CUZnSIB_SIB_oblig", method = "Pearson")
+
+# diff pearson's r
+cor_test(E1_CUZnSIB_clean, "OUS_IB", "Choice_CUZminusSIB_oblig", method = "Pearson")
+```
+
+
+# Oblig ~ MAC Family Values vs MFT Ingroup Loyalty Tests {.tabset}
+
+<br>
+
+These analyses were only conducted within the CUZnSIB dataset due to potential confounding of moral values' effects on obligation judgments in other datasets.
+
+<br>
+
+## No Choice
+```{r}
+# correlation values are taken from the oblig ~ ind. diffs analyses
+## r.jk = oblig ~ family values corr; r.jh = oblig ~ ingroup loyalty corr; r.kh = family values ~ ingroup loyalty corr
+
+# distant
+cocor.dep.groups.overlap(r.jk = .26, r.jh = .17, r.kh = .65, 205, alternative = "two.sided",
+                         test = "steiger1980", alpha = 0.05, conf.level = 0.95, null.value = 0)
+
+# close
+cocor.dep.groups.overlap(r.jk = .48, r.jh = .25, r.kh = .65, 205, alternative = "two.sided",
+                         test = "steiger1980", alpha = 0.05, conf.level = 0.95, null.value = 0)
+
+# difference
+cocor.dep.groups.overlap(r.jk = -.21, r.jh = -.07, r.kh = .65, 205, alternative = "two.sided",
+                         test = "steiger1980", alpha = 0.05, conf.level = 0.95, null.value = 0)
+```
+## Choice
+```{r}
+# correlation values are taken from the oblig ~ ind. diffs analyses
+## r.jk = oblig ~ family values corr; r.jh = oblig ~ ingroup loyalty corr; r.kh = family values ~ ingroup loyalty corr
+
+# distant
+cocor.dep.groups.overlap(r.jk = .32, r.jh = .16, r.kh = .65, 205, alternative = "two.sided",
+                         test = "steiger1980", alpha = 0.05, conf.level = 0.95, null.value = 0)
+
+# close
+cocor.dep.groups.overlap(r.jk = .40, r.jh = .24, r.kh = .65, 205, alternative = "two.sided",
+                         test = "steiger1980", alpha = 0.05, conf.level = 0.95, null.value = 0)
+
+# difference
+cocor.dep.groups.overlap(r.jk = -.23, r.jh = -.20, r.kh = .65, 205, alternative = "two.sided",
+                         test = "steiger1980", alpha = 0.05, conf.level = 0.95, null.value = 0)
+```
+
